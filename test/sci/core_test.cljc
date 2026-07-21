@@ -1302,7 +1302,7 @@
 (deftest could-not-resolve-symbol-test3
   (when-not tu/native?
     (is (thrown-with-data? #"resolve.*def"
-                           {:phase "analysis"}
+                           {:phase "analysis" :sci.impl/symbol 'def}
                            (eval* "def")))))
 
 (deftest function-results-dont-have-metadata

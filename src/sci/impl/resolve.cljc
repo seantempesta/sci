@@ -8,8 +8,9 @@
             [sci.impl.utils :as utils :refer [strip-core-ns
                                               ana-macros]]))
 
-(defn throw-error-with-location [msg node]
-  (utils/throw-error-with-location msg node {:phase "analysis"}))
+(defn throw-error-with-location
+  ([msg node] (throw-error-with-location msg node {:phase "analysis"}))
+  ([msg node data] (utils/throw-error-with-location msg node data)))
 
 (defn mark-resolve-sym
   [sym idx]
@@ -329,4 +330,5 @@
                    resolved))
         (throw-error-with-location
          (str "Unable to resolve symbol: " sym)
-         sym)))))
+         sym
+         {:phase "analysis" :sci.impl/symbol sym})))))
