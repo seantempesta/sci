@@ -103,6 +103,10 @@
             (handle-js-lib env (assoc opts :path path) lib-name current-ns the-lib)
             env))))
    (let [the-current-ns (get-in env [:namespaces current-ns]) ;; = ns-data?
+         the-current-ns (if (:sci/as-alias? _opts)
+                          the-current-ns
+                          (update the-current-ns :required-namespaces
+                                  (fnil conj #{}) lib-name))
          the-current-ns (if as (assoc-in the-current-ns [:aliases as] lib-name)
                             the-current-ns)
          rename-sym (if rename (fn [sym] (or (rename sym) sym))
@@ -173,7 +177,9 @@
                                (handle-js-lib env (assoc opts :path path) lib cnn the-lib)))
                  {}))))
         (if-let [as-alias (:as-alias opts)]
-          (reset! env* (handle-require-libspec-env ctx env cnn nil lib {:as as-alias}))
+          (reset! env* (handle-require-libspec-env
+                        ctx env cnn nil lib
+                        {:as as-alias :sci/as-alias? true}))
           (let [{:keys [:reload :reload-all]} opts
                 namespaces (get env :namespaces)
                 reload* (or reload reload-all (:reload-all ctx))]

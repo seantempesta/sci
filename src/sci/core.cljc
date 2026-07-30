@@ -685,10 +685,12 @@
   "Returns effective alias and refer bindings for `ns-name` in `ctx`.
 
   Aliases map their local symbol to a target namespace symbol. Refers map
-  their local symbol to the fully qualified symbol of the referred SCI Var."
+  their local symbol to the fully qualified symbol of the referred SCI Var.
+  Requires is the set of namespaces actually loaded by require operations."
   [ctx ns-name]
   (let [namespace-map (get-in @(:env ctx) [:namespaces ns-name])]
     {:aliases (or (:aliases namespace-map) {})
+     :requires (or (:required-namespaces namespace-map) #{})
      :refers
      (into {}
            (keep (fn [[local-name sci-var]]
@@ -700,10 +702,10 @@
   "Replaces effective alias and refer bindings for `ns-name` in `ctx`.
 
   `bindings` contains `:aliases`, mapping local symbols to target namespace
-  symbols, and `:refers`, mapping local symbols to fully qualified target Var
-  symbols. Refer targets must already be installed in the context. Returns the
-  mutated context."
-  [ctx ns-name {:keys [aliases refers]}]
+  symbols, `:refers`, mapping local symbols to fully qualified target Var
+  symbols, and `:requires`, the namespaces actually loaded. Refer targets must
+  already be installed in the context. Returns the mutated context."
+  [ctx ns-name {:keys [aliases refers requires]}]
   (swap! (:env ctx)
          (fn [env]
            (let [resolved-refers
@@ -730,6 +732,8 @@
                             %
                             (assoc % ns-name {})))
                  (assoc-in [:namespaces ns-name :aliases] (or aliases {}))
+                 (assoc-in [:namespaces ns-name :required-namespaces]
+                           (or requires #{}))
                  (assoc-in [:namespaces ns-name :refers] resolved-refers)))))
   ctx)
 

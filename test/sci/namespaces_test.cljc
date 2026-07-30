@@ -194,6 +194,7 @@
      {:aliases {'one 'binding.target
                 'two 'binding.target
                 'unloaded 'binding.not-loaded}
+      :requires #{'binding.target}
       :refers {'renamed 'binding.target/original}})
     (is (= [:ok :ok :ok :binding.not-loaded/value]
            (:val
@@ -204,6 +205,7 @@
     (is (= {:aliases {'one 'binding.target
                       'two 'binding.target
                       'unloaded 'binding.not-loaded}
+            :requires #{'binding.target}
             :refers {'renamed 'binding.target/original}}
            (sci/namespace-bindings ctx 'binding.consumer)))
     (is (= 'binding.target (sci/ns-name target-ns)))))
@@ -215,6 +217,14 @@
          #"missing/value does not name an installed SCI Var"
          (sci/install-namespace-bindings!
           ctx 'binding.consumer {:refers {'local 'missing/value}})))))
+
+(deftest effective-namespace-bindings-distinguish-load-from-as-alias-test
+  (let [ctx (sci/init {})]
+    (sci/eval-string* ctx
+                      (str "(require '[clojure.string :as loaded]) "
+                           "(require '[not.loaded :as-alias only-an-alias])"))
+    (is (= #{'clojure.string}
+           (:requires (sci/namespace-bindings ctx 'user))))))
 
 (deftest ns-map-test
   (is (eval* "(some? (get (ns-map *ns*) 'inc))"))
