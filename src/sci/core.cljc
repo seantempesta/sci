@@ -682,14 +682,17 @@
     (symbol (str sci-ns) (str n))))
 
 (defn namespace-bindings
-  "Returns effective alias and refer bindings for `ns-name` in `ctx`.
+  "Returns serializable resolver bindings for `ns-name` in `ctx`.
 
   Aliases map their local symbol to a target namespace symbol. Refers map
   their local symbol to the fully qualified symbol of the referred SCI Var.
-  Requires is the set of namespaces actually loaded by require operations."
+  Requires is the set of namespaces actually loaded by require operations.
+  Imports map local symbols to fully qualified class symbols; a nil target is
+  SCI's exact mask for a removed default import."
   [ctx ns-name]
   (let [namespace-map (get-in @(:env ctx) [:namespaces ns-name])]
     {:aliases (or (:aliases namespace-map) {})
+     :imports (or (:imports namespace-map) {})
      :requires (or (:required-namespaces namespace-map) #{})
      :refers
      (into {}
@@ -738,16 +741,42 @@
   ctx)
 
 (defn install-namespace-bindings!
-  "Replaces effective alias and refer bindings for `ns-name` in `ctx`.
+  "Replaces serializable resolver bindings for `ns-name` in `ctx`.
 
   `bindings` contains `:aliases`, mapping local symbols to target namespace
   symbols, `:refers`, mapping local symbols to fully qualified target Var
-  symbols, and `:requires`, the namespaces actually loaded. Refer targets must
-  already be installed in the context. Returns the mutated context."
-  [ctx ns-name {:keys [aliases refers requires]}]
+  symbols, `:imports`, mapping local symbols to fully qualified class symbols
+  or nil masks, and `:requires`, the namespaces actually loaded. Refer targets
+  and non-nil import targets must already be installed in the context. Returns
+  the mutated context."
+  [ctx ns-name {:keys [aliases imports refers requires]}]
   (swap! (:env ctx)
          (fn [env]
-           (let [resolved-refers
+           (let [resolved-imports
+                 (into {}
+                       (map
+                        (fn [[local-name target]]
+                          (when-not (symbol? local-name)
+                            (throw
+                             (ex-info
+                              "An SCI import local name must be a symbol."
+                              {:type :sci/error
+                               :namespace ns-name
+                               :local-name local-name
+                               :target target})))
+                          (when (and target
+                                     (not (contains? (:class->opts env)
+                                                     target)))
+                            (throw
+                             (ex-info
+                              (str target " does not name an installed SCI class")
+                              {:type :sci/error
+                               :namespace ns-name
+                               :local-name local-name
+                               :target target})))
+                          [local-name target]))
+                       (or imports {}))
+                 resolved-refers
                  (into {}
                        (map
                         (fn [[local-name target]]
@@ -771,6 +800,7 @@
                             %
                             (assoc % ns-name {})))
                  (assoc-in [:namespaces ns-name :aliases] (or aliases {}))
+                 (assoc-in [:namespaces ns-name :imports] resolved-imports)
                  (assoc-in [:namespaces ns-name :required-namespaces]
                            (or requires #{}))
                  (assoc-in [:namespaces ns-name :refers] resolved-refers)))))

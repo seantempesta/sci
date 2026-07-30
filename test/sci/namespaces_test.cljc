@@ -194,17 +194,22 @@
      {:aliases {'one 'binding.target
                 'two 'binding.target
                 'unloaded 'binding.not-loaded}
+      :imports {'Str 'java.lang.String
+                'String nil}
       :requires #{'binding.target}
       :refers {'renamed 'binding.target/original}})
-    (is (= [:ok :ok :ok :binding.not-loaded/value]
+    (is (= [:ok :ok :ok :binding.not-loaded/value "ok" nil]
            (:val
             (sci/eval-string+
              ctx
-             "[(one/original) (two/original) (renamed) ::unloaded/value]"
+             (str "[(one/original) (two/original) (renamed) "
+                  "::unloaded/value (Str. \"ok\") (resolve 'String)]")
              {:ns (sci/create-ns 'binding.consumer)}))))
     (is (= {:aliases {'one 'binding.target
                       'two 'binding.target
                       'unloaded 'binding.not-loaded}
+            :imports {'Str 'java.lang.String
+                      'String nil}
             :requires #{'binding.target}
             :refers {'renamed 'binding.target/original}}
            (sci/namespace-bindings ctx 'binding.consumer)))
@@ -217,6 +222,14 @@
          #"missing/value does not name an installed SCI Var"
          (sci/install-namespace-bindings!
           ctx 'binding.consumer {:refers {'local 'missing/value}})))))
+
+(deftest effective-namespace-bindings-require-installed-import-target-test
+  (let [ctx (sci/init {})]
+    (is (thrown-with-msg?
+         #?(:cljd cljd.core/ExceptionInfo :clj Exception :cljs js/Error)
+         #"missing.Class does not name an installed SCI class"
+         (sci/install-namespace-bindings!
+          ctx 'binding.consumer {:imports {'Missing 'missing.Class}})))))
 
 (deftest effective-namespace-bindings-distinguish-load-from-as-alias-test
   (let [ctx (sci/init {})]
