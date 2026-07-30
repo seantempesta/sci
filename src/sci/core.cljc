@@ -717,6 +717,26 @@
                       namespace-map)]))
         (:namespaces @(:env ctx))))
 
+(defn namespace-state
+  "Returns the complete SCI namespace state in `ctx`.
+
+  The returned persistent map is an exact snapshot of SCI's namespace
+  resolver state: interned Vars and values plus aliases, imports, refers,
+  required namespaces, types, and namespace objects. It is intended for an
+  isolated `fork` whose namespace mutation must be installed only after an
+  external commit succeeds."
+  [ctx]
+  (:namespaces @(:env ctx)))
+
+(defn install-namespace-state!
+  "Replaces the complete namespace state in `ctx` with `namespace-state`.
+
+  `namespace-state` must be a value returned by `namespace-state`. Returns the
+  mutated context."
+  [ctx namespace-state]
+  (swap! (:env ctx) assoc :namespaces namespace-state)
+  ctx)
+
 (defn install-namespace-bindings!
   "Replaces effective alias and refer bindings for `ns-name` in `ctx`.
 

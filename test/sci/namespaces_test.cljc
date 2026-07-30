@@ -237,6 +237,30 @@
     (is (= #{'hidden}
            (get (sci/namespace-interns ctx) 'intern.snapshot)))))
 
+(deftest namespace-state-roundtrip-preserves-complete-resolver-state-test
+  (let [ctx (sci/init {})
+        isolated (sci/fork ctx)
+        before (sci/namespace-state ctx)]
+    (sci/eval-string* isolated
+                      (str "(ns state.snapshot "
+                           "(:require [clojure.string :as str :refer [join]])) "
+                           "(def own 1) "
+                           "(ns-unmap *ns* 'String)"))
+    (let [after (sci/namespace-state isolated)]
+      (is (not= before after))
+      (is (nil? (get-in after ['state.snapshot :imports 'String])))
+      (is (some? (get-in after ['state.snapshot 'own])))
+      (is (= before (sci/namespace-state ctx))
+          "mutating the fork leaves the original context unchanged")
+      (sci/install-namespace-state! ctx after)
+      (is (= after (sci/namespace-state ctx)))
+      (is (= [nil "a-b" 1]
+             (:val
+              (sci/eval-string+
+               ctx
+               "[(resolve 'String) (join \"-\" [\"a\" \"b\"]) own]"
+               {:ns (sci/create-ns 'state.snapshot)})))))))
+
 (deftest ns-map-test
   (is (eval* "(some? (get (ns-map *ns*) 'inc))"))
   #?(:clj (is (eval* "(some? (get (ns-map *ns*) 'String))")))
