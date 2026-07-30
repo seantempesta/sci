@@ -698,6 +698,25 @@
                      [local-name (var->symbol sci-var)])))
            (:refers namespace-map))}))
 
+(defn namespace-interns
+  "Returns each namespace's own interned names in `ctx`.
+
+  Aliases, imports, refers, required namespaces, types, and SCI's namespace
+  object are resolver structure rather than interns and are excluded. Both
+  public and private Vars are included."
+  [ctx]
+  (into {}
+        (map (fn [[ns-name namespace-map]]
+               [ns-name
+                (into #{}
+                      (comp
+                       (remove (comp #{:aliases :imports :obj :refer :refers
+                                       :required-namespaces :types}
+                                     key))
+                       (map key))
+                      namespace-map)]))
+        (:namespaces @(:env ctx))))
+
 (defn install-namespace-bindings!
   "Replaces effective alias and refer bindings for `ns-name` in `ctx`.
 

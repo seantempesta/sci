@@ -226,6 +226,17 @@
     (is (= #{'clojure.string}
            (:requires (sci/namespace-bindings ctx 'user))))))
 
+(deftest namespace-interns-exclude-resolver-structure-test
+  (let [ctx (sci/init {})]
+    (sci/eval-string* ctx
+                      "(ns intern.snapshot (:require [clojure.string :as str :refer [join]])) (def public 1) (def ^:private hidden 2)")
+    (is (= #{'public 'hidden}
+           (get (sci/namespace-interns ctx) 'intern.snapshot)))
+    (sci/eval-string* ctx
+                      "(ns-unmap (find-ns 'intern.snapshot) (symbol \"public\"))")
+    (is (= #{'hidden}
+           (get (sci/namespace-interns ctx) 'intern.snapshot)))))
+
 (deftest ns-map-test
   (is (eval* "(some? (get (ns-map *ns*) 'inc))"))
   #?(:clj (is (eval* "(some? (get (ns-map *ns*) 'String))")))
