@@ -681,6 +681,58 @@
         n (:name m)]
     (symbol (str sci-ns) (str n))))
 
+(defn namespace-bindings
+  "Returns effective alias and refer bindings for `ns-name` in `ctx`.
+
+  Aliases map their local symbol to a target namespace symbol. Refers map
+  their local symbol to the fully qualified symbol of the referred SCI Var."
+  [ctx ns-name]
+  (let [namespace-map (get-in @(:env ctx) [:namespaces ns-name])]
+    {:aliases (or (:aliases namespace-map) {})
+     :refers
+     (into {}
+           (keep (fn [[local-name sci-var]]
+                   (when (utils/var? sci-var)
+                     [local-name (var->symbol sci-var)])))
+           (:refers namespace-map))}))
+
+(defn install-namespace-bindings!
+  "Replaces effective alias and refer bindings for `ns-name` in `ctx`.
+
+  `bindings` contains `:aliases`, mapping local symbols to target namespace
+  symbols, and `:refers`, mapping local symbols to fully qualified target Var
+  symbols. Refer targets must already be installed in the context. Returns the
+  mutated context."
+  [ctx ns-name {:keys [aliases refers]}]
+  (swap! (:env ctx)
+         (fn [env]
+           (let [resolved-refers
+                 (into {}
+                       (map
+                        (fn [[local-name target]]
+                          (let [target-ns (some-> target namespace symbol)
+                                target-name (symbol (name target))
+                                sci-var (get-in env [:namespaces target-ns
+                                                     target-name])]
+                            (when-not (utils/var? sci-var)
+                              (throw
+                               (ex-info
+                                (str target " does not name an installed SCI Var")
+                                {:type :sci/error
+                                 :namespace ns-name
+                                 :local-name local-name
+                                 :target target})))
+                            [local-name sci-var])))
+                       (or refers {}))]
+             (-> env
+                 (update :namespaces
+                         #(if (contains? % ns-name)
+                            %
+                            (assoc % ns-name {})))
+                 (assoc-in [:namespaces ns-name :aliases] (or aliases {}))
+                 (assoc-in [:namespaces ns-name :refers] resolved-refers)))))
+  ctx)
+
 (defn resolve [ctx sym]
   (@utils/eval-resolve-state ctx {} sym))
 

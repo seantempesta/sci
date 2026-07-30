@@ -184,6 +184,38 @@
   (testing "private vars are not referred"
     (is (eval* "(every? (fn [[_ v]] (not (:private (meta v)))) (ns-refers *ns*))"))))
 
+(deftest effective-namespace-bindings-test
+  (let [ctx (sci/init {})
+        target-ns (:ns (sci/eval-string+ ctx
+                                        "(ns binding.target) (defn original [] :ok)"))]
+    (sci/install-namespace-bindings!
+     ctx
+     'binding.consumer
+     {:aliases {'one 'binding.target
+                'two 'binding.target
+                'unloaded 'binding.not-loaded}
+      :refers {'renamed 'binding.target/original}})
+    (is (= [:ok :ok :ok :binding.not-loaded/value]
+           (:val
+            (sci/eval-string+
+             ctx
+             "[(one/original) (two/original) (renamed) ::unloaded/value]"
+             {:ns (sci/create-ns 'binding.consumer)}))))
+    (is (= {:aliases {'one 'binding.target
+                      'two 'binding.target
+                      'unloaded 'binding.not-loaded}
+            :refers {'renamed 'binding.target/original}}
+           (sci/namespace-bindings ctx 'binding.consumer)))
+    (is (= 'binding.target (sci/ns-name target-ns)))))
+
+(deftest effective-namespace-bindings-require-installed-refer-target-test
+  (let [ctx (sci/init {})]
+    (is (thrown-with-msg?
+         #?(:cljd cljd.core/ExceptionInfo :clj Exception :cljs js/Error)
+         #"missing/value does not name an installed SCI Var"
+         (sci/install-namespace-bindings!
+          ctx 'binding.consumer {:refers {'local 'missing/value}})))))
+
 (deftest ns-map-test
   (is (eval* "(some? (get (ns-map *ns*) 'inc))"))
   #?(:clj (is (eval* "(some? (get (ns-map *ns*) 'String))")))
