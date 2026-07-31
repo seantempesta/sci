@@ -963,7 +963,7 @@
      (or (get (meta x) :type)
          (cljs.core/type x))))
 
-;;;; Clojure 1.11.0 kwargs
+;;;; Clojure 1.11 compatibility
 
 #?(:clj (defmacro when-<-clojure-1.11.0 [& body]
           (let [{:keys [:major :minor]} *clojure-version*]
@@ -992,6 +992,187 @@
                                         (if (next s)
                                           (.createAsIfByAssoc PersistentArrayMap (to-array s))
                                           (if (seq s) (first s) (.-EMPTY PersistentArrayMap))))))
+
+#?(:clj
+   (do
+     (defn sci-abs
+       {:doc "Returns the absolute value of a.
+  If a is Long/MIN_VALUE => Long/MIN_VALUE
+  If a is a double and zero => +0.0
+  If a is a double and ##Inf or ##-Inf => ##Inf
+  If a is a double and ##NaN => ##NaN"
+       :added "1.11"}
+       [a]
+       (cond
+         (or (instance? Byte a)
+             (instance? Short a)
+             (instance? Integer a)
+             (instance? Long a))
+         (Math/abs (.longValue ^Number a))
+
+         (or (instance? Float a)
+             (instance? Double a))
+         (Math/abs (.doubleValue ^Number a))
+
+         (instance? java.math.BigInteger a)
+         (clojure.lang.BigInt/fromBigInteger (.abs ^java.math.BigInteger a))
+
+         (instance? java.math.BigDecimal a)
+         (let [math-context @clojure.lang.RT/MATH_CONTEXT]
+           (if math-context
+             (.abs ^java.math.BigDecimal a ^java.math.MathContext math-context)
+             (.abs ^java.math.BigDecimal a)))
+
+         (neg? a) (- a)
+         :else a))
+
+     (defn sci-random-uuid
+       {:doc "Returns a pseudo-randomly generated java.util.UUID instance (i.e. type 4).
+
+  See: https://docs.oracle.com/javase/8/docs/api/java/util/UUID.html#randomUUID--"
+        :added "1.11"}
+       ^java.util.UUID []
+       (java.util.UUID/randomUUID))
+
+     (defn sci-iteration
+       "Creates a seqable/reducible via repeated calls to step,
+  a function of some (continuation token) 'k'. The first call to step
+  will be passed initk, returning 'ret'. Iff (somef ret) is true,
+  (vf ret) will be included in the iteration, else iteration will
+  terminate and vf/kf will not be called. If (kf ret) is non-nil it
+  will be passed to the next step call, else iteration will terminate.
+
+  This can be used e.g. to consume APIs that return paginated or batched data.
+
+   step - (possibly impure) fn of 'k' -> 'ret'
+
+   :somef - fn of 'ret' -> logical true/false, default 'some?'
+   :vf - fn of 'ret' -> 'v', a value produced by the iteration, default 'identity'
+   :kf - fn of 'ret' -> 'next-k' or nil (signaling 'do not continue'), default 'identity'
+   :initk - the first value passed to step, default 'nil'
+
+  It is presumed that step with non-initk is unreproducible/non-idempotent.
+  If step with initk is unreproducible it is on the consumer to not consume twice."
+       {:added "1.11"}
+       [step & {:keys [somef vf kf initk]
+                :or {vf identity
+                     kf identity
+                     somef some?
+                     initk nil}}]
+       (reify
+         clojure.lang.Seqable
+         (seq [_]
+           ((fn next [ret]
+              (when (somef ret)
+                (cons (vf ret)
+                      (when-some [k (kf ret)]
+                        (lazy-seq (next (step k)))))))
+            (step initk)))
+         clojure.lang.IReduceInit
+         (reduce [_ rf init]
+           (loop [acc init
+                  ret (step initk)]
+             (if (somef ret)
+               (let [acc (rf acc (vf ret))]
+                 (if (reduced? acc)
+                   @acc
+                   (if-some [k (kf ret)]
+                     (recur acc (step k))
+                     acc)))
+               acc)))))
+
+     (defn sci-update-vals
+       "m f => {k (f v) ...}
+
+  Given a map m and a function f of 1-argument, returns a new map where the keys of m
+  are mapped to result of applying f to the corresponding values of m."
+       {:added "1.11"}
+       [m f]
+       (with-meta
+         (persistent!
+          (reduce-kv (fn [acc k v] (assoc! acc k (f v)))
+                     (if (instance? clojure.lang.IEditableCollection m)
+                       (transient m)
+                       (transient {}))
+                     m))
+         (meta m)))
+
+     (defn sci-update-keys
+       "m f => {(f k) v ...}
+
+  Given a map m and a function f of 1-argument, returns a new map whose
+  keys are the result of applying f to the keys of m, mapped to the
+  corresponding values of m.
+  f must return a unique key for each key of m, else the behavior is undefined."
+       {:added "1.11"}
+       [m f]
+       (let [ret (persistent!
+                  (reduce-kv (fn [acc k v] (assoc! acc (f k) v))
+                             (transient {})
+                             m))]
+         (with-meta ret (meta m))))
+
+     (defn- parsing-err
+       ^String [val]
+       (str "Expected string, got " (if (nil? val) "nil" (-> val class .getName))))
+
+     (defn sci-parse-long
+       {:doc "Parse string of decimal digits with optional leading -/+ and return a
+  Long value, or nil if parse fails"
+        :added "1.11"}
+       ^Long [^String s]
+       (if (string? s)
+         (try
+           (Long/valueOf s)
+           (catch NumberFormatException _ nil))
+         (throw (IllegalArgumentException. (parsing-err s)))))
+
+     (defn sci-parse-double
+       {:doc "Parse string with floating point components and return a Double value,
+  or nil if parse fails.
+
+  Grammar: https://docs.oracle.com/javase/8/docs/api/java/lang/Double.html#valueOf-java.lang.String-"
+        :added "1.11"}
+       ^Double [^String s]
+       (if (string? s)
+         (try
+           (Double/valueOf s)
+           (catch NumberFormatException _ nil))
+         (throw (IllegalArgumentException. (parsing-err s)))))
+
+     (defn sci-parse-uuid
+       {:doc "Parse a string representing a UUID and return a java.util.UUID instance,
+  or nil if parse fails.
+
+  Grammar: https://docs.oracle.com/javase/8/docs/api/java/util/UUID.html#toString--"
+        :added "1.11"}
+       ^java.util.UUID [^String s]
+       (try
+         (java.util.UUID/fromString s)
+         (catch IllegalArgumentException _ nil)))
+
+     (defn sci-parse-boolean
+       {:doc "Parse strings \"true\" or \"false\" and return a boolean, or nil if invalid"
+        :added "1.11"}
+       [^String s]
+       (if (string? s)
+         (case s
+           "true" true
+           "false" false
+           nil)
+         (throw (IllegalArgumentException. (parsing-err s)))))
+
+     (defn sci-NaN?
+       {:doc "Returns true if num is NaN, else false"
+        :added "1.11"}
+       [^double num]
+       (Double/isNaN num))
+
+     (defn sci-infinite?
+       {:doc "Returns true if num is negative or positive infinity, else false"
+        :added "1.11"}
+       [^double num]
+       (Double/isInfinite num))))
 
 #?(:clj (def clojure-version-var
           (sci.impl.utils/dynamic-var
@@ -1468,6 +1649,7 @@
      'add-watch (copy-core-var add-watch)
      'remove-watch (copy-core-var remove-watch)
      'aclone (copy-core-var aclone)
+     #?@(:clj ['abs (copy-var sci-abs clojure-core-ns {:name 'abs})])
      'aget (copy-core-var aget)
      'alias (copy-var sci-alias clojure-core-ns {:name 'alias})
      'all-ns (copy-var sci-all-ns clojure-core-ns {:name 'all-ns})
@@ -1668,12 +1850,14 @@
      'intern (copy-var sci-intern clojure-core-ns {:name 'intern})
      'into (copy-core-var into)
      'iterate (copy-core-var iterate)
+     #?@(:clj ['iteration (copy-var sci-iteration clojure-core-ns {:name 'iteration})])
      #?@(:clj ['iterator-seq (copy-core-var iterator-seq)])
      'int (copy-core-var int)
      'int? (copy-core-var int?)
      'interpose (copy-core-var interpose)
      'indexed? (copy-core-var indexed?)
      'integer? (copy-core-var integer?)
+     #?@(:clj ['infinite? (copy-var sci-infinite? clojure-core-ns {:name 'infinite?})])
      #?@(:cljd [] :default ['ints (copy-core-var ints)])
      'into-array (copy-core-var into-array)
      #?@(:cljd [] :default ['isa? (copy-var hierarchies/isa?* clojure-core-ns {:name 'isa?})])
@@ -1729,6 +1913,7 @@
      'mod (copy-core-var mod)
      'name (copy-core-var name)
      'namespace (copy-core-var namespace)
+     #?@(:clj ['NaN? (copy-var sci-NaN? clojure-core-ns {:name 'NaN?})])
      'nfirst (copy-core-var nfirst)
      'not (copy-core-var not)
      'not= (copy-core-var not=)
@@ -1771,6 +1956,10 @@
      'partition (copy-core-var partition)
      'partition-all (copy-core-var partition-all)
      'partition-by (copy-core-var partition-by)
+     #?@(:clj ['parse-boolean (copy-var sci-parse-boolean clojure-core-ns {:name 'parse-boolean})
+               'parse-double (copy-var sci-parse-double clojure-core-ns {:name 'parse-double})
+               'parse-long (copy-var sci-parse-long clojure-core-ns {:name 'parse-long})
+               'parse-uuid (copy-var sci-parse-uuid clojure-core-ns {:name 'parse-uuid})])
      'persistent! (copy-core-var persistent!)
      #?@(:clj ['promise (copy-core-var promise)])
      'push-thread-bindings (copy-var sci.impl.vars/push-thread-bindings clojure-core-ns {:name 'push-thread-bindings})
@@ -1778,7 +1967,8 @@
      'qualified-symbol? (copy-core-var qualified-symbol?)
      'qualified-keyword? (copy-core-var qualified-keyword?)
      'quot (copy-core-var quot)
-     #?@(:cljs ['random-uuid (copy-core-var random-uuid)])
+     #?@(:clj ['random-uuid (copy-var sci-random-uuid clojure-core-ns {:name 'random-uuid})]
+         :cljs ['random-uuid (copy-core-var random-uuid)])
      're-seq (copy-core-var re-seq)
      'refer (copy-var sci-refer clojure-core-ns {:name 'refer})
      'refer-clojure (macrofy 'refer-clojure sci-refer-clojure)
@@ -1887,6 +2077,8 @@
      #?@(:cljd [] :default ['to-array-2d (copy-core-var to-array-2d)])
      'update (copy-core-var update)
      'update-in (copy-core-var update-in)
+     #?@(:clj ['update-keys (copy-var sci-update-keys clojure-core-ns {:name 'update-keys})
+               'update-vals (copy-var sci-update-vals clojure-core-ns {:name 'update-vals})])
      'uri? (copy-core-var uri?)
      'uuid? (copy-core-var uuid?)
      #?@(:cljd [] :default ['unchecked-dec (copy-core-var unchecked-dec)])

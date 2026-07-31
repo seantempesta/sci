@@ -1815,6 +1815,69 @@
      (is (str/ends-with? (:qualifier (sci/eval-string "*clojure-version*"))
                          "SCI"))))
 
+#?(:clj
+   (deftest clojure-1-11-core-functions-test
+     (testing "parsing functions match the Clojure 1.11 contracts"
+       (is (= [42 -42 nil
+               1.25 nil true
+               true false nil
+               true nil]
+              (sci/eval-string
+               "[(parse-long \"42\") (parse-long \"-42\") (parse-long \"42x\")
+                 (parse-double \"1.25\") (parse-double \"one\") (NaN? (parse-double \"NaN\"))
+                 (parse-boolean \"true\") (parse-boolean \"false\") (parse-boolean \"TRUE\")
+                 (= (parse-uuid \"123e4567-e89b-12d3-a456-426614174000\")
+                    (parse-uuid \"123e4567-e89b-12d3-a456-426614174000\"))
+                 (parse-uuid \"not-a-uuid\")]"))))
+     (testing "numeric predicates and abs cover their specified edge cases"
+       (is (= [7
+               -9223372036854775808
+               ##Inf
+               true false true false]
+              (sci/eval-string
+               "[(abs -7)
+                 (abs -9223372036854775808)
+                 (abs ##-Inf)
+                 (NaN? ##NaN) (NaN? 1.0)
+                 (infinite? ##Inf) (infinite? 1.0)]"))))
+     (testing "map updates preserve metadata and update the requested side"
+       (is (= [{:a 2 :b 3} {:source :test}
+               {:prefix/a 1 :prefix/b 2} {:source :test}]
+              (sci/eval-string
+               "(let [m (with-meta (sorted-map :a 1 :b 2) {:source :test})
+                      vals-updated (update-vals m inc)
+                      keys-updated (update-keys m #(keyword \"prefix\" (name %)))]
+                  [vals-updated (meta vals-updated)
+                   keys-updated (meta keys-updated)])"))))
+     (testing "iteration is lazy, reducible, and honors reduced"
+       (is (= [[0 10 20] [0 1 2 3]]
+              (sci/eval-string
+               "(let [calls (atom [])
+                      xs (iteration
+                          (fn [k]
+                            (swap! calls conj k)
+                            (when (< k 3) {:value (* 10 k) :next (inc k)}))
+                          :somef some? :vf :value :kf :next :initk 0)]
+                  [(vec xs) @calls])")))
+       (is (= [[0 1] [0 1]]
+              (sci/eval-string
+               "(let [calls (atom [])
+                      xs (iteration
+                          (fn [k]
+                            (swap! calls conj k)
+                            {:value k :next (inc k)})
+                          :vf :value :kf :next :initk 0)]
+                  [(reduce (fn [ret x]
+                             (if (= x 1)
+                               (reduced (conj ret x))
+                               (conj ret x)))
+                           [] xs)
+                   @calls])"))))
+     (testing "random-uuid returns a UUID that parse-uuid round-trips"
+       (is (= [true true]
+              (sci/eval-string
+               "(let [u (random-uuid)] [(uuid? u) (= u (parse-uuid (str u)))])"))))))
+
 (deftest empty-coll-identical-test
   (is (identical? [] (sci/eval-string "[]")))
   (is (identical? #{} (sci/eval-string "#{}"))))
