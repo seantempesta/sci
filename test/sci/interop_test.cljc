@@ -13,6 +13,31 @@
   (tu/eval* expr {}))
 
 #?(:clj
+   (deftest host-interop-observer-test
+     (let [observations (atom 0)
+           ctx (sci/init {:host-interop-observer #(swap! observations inc)
+                          :classes {'Throwable Throwable}})]
+       (sci/eval-string* ctx
+                         "(defmacro host-call [x] (list '.toUpperCase x))")
+       (is (zero? @observations))
+       (sci/eval-string* ctx
+                         "(def observed (fn [] (host-call \"x\")))")
+       (is (= 1 @observations)
+           "interop introduced by macro expansion is observed at analysis")
+       (sci/eval-string* ctx "(observed)")
+       (is (= 1 @observations)
+           "runtime invocation does not turn the observer into a policy hook")
+       (sci/eval-string* ctx "(.toLowerCase \"X\")")
+       (sci/eval-string* ctx "(. \"x\" toUpperCase)")
+       (sci/eval-string* ctx "(new Throwable \"x\")")
+       (is (= 4 @observations))
+       (let [ctx-without-observer
+             (sci/merge-opts ctx {:host-interop-observer nil})]
+         (sci/eval-string* ctx-without-observer "(.toUpperCase \"x\")"))
+       (is (= 4 @observations)
+           "merge-opts can remove the observation without changing interop"))))
+
+#?(:clj
    (deftest instance-method-config-cache-test
      (testing "polymorphic call site stays correct with a closed class elsewhere"
        (is (= ["a" "1" "2.0"]

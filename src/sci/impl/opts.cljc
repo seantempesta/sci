@@ -209,6 +209,7 @@
                         reload-all
                         check-permissions
                         interrupt-fn
+                        host-interop-observer
                         unrestricted
                         recur-target
                         params
@@ -216,15 +217,17 @@
                         closure-bindings
                         fn-expr]))
 
-(defn ->ctx [bindings env features readers check-permissions? & {:keys [interrupt-fn]}]
+(defn ->ctx [bindings env features readers check-permissions? & {:keys [interrupt-fn host-interop-observer]}]
   #?(:clj (->Ctx bindings env features readers false check-permissions? interrupt-fn
+                 host-interop-observer
                  nil nil nil nil nil nil)
      :default {:bindings bindings
                :env env
                :features features
                :readers readers
                :check-permissions check-permissions?
-               :interrupt-fn interrupt-fn}))
+               :interrupt-fn interrupt-fn
+               :host-interop-observer host-interop-observer}))
 
 (def default-ns-aliases
   #?(:cljd {;; in SCI the core namespace is always called clojure.core
@@ -248,6 +251,7 @@
            proxy-fn
            deftype-fn
            interrupt-fn
+           host-interop-observer
            unrestricted
            #?(:cljs async-load-fn)
            #?(:cljs js-libs)
@@ -262,7 +266,8 @@
         _ (init-env! env aliases namespaces classes raw-classes imports
                      load-fn #?(:cljs async-load-fn) #?(:cljs js-libs) ns-aliases)
         ctx (assoc (->ctx {} env features readers (or allow deny)
-                          :interrupt-fn interrupt-fn)
+                          :interrupt-fn interrupt-fn
+                          :host-interop-observer host-interop-observer)
                    :allow (when allow (process-permissions #{} allow))
                    :deny (when deny (process-permissions #{} deny))
                    :reify-fn (or reify-fn default-reify-fn)
@@ -298,9 +303,13 @@
                      bindings (merge {'user (assoc bindings :obj utils/user-ns)}))
         _ (init-env! !env aliases namespaces classes raw-classes imports load-fn #?(:cljs async-load-fn) #?(:cljs js-libs) ns-aliases)
         interrupt-fn (if (contains? opts :interrupt-fn) (:interrupt-fn opts) (:interrupt-fn ctx))
+        host-interop-observer (if (contains? opts :host-interop-observer)
+                                (:host-interop-observer opts)
+                                (:host-interop-observer ctx))
         unrestricted (if (contains? opts :unrestricted) (:unrestricted opts) (:unrestricted ctx))
         ctx (assoc (->ctx {} !env features readers (or (:check-permissions ctx) allow deny)
-                          :interrupt-fn interrupt-fn)
+                          :interrupt-fn interrupt-fn
+                          :host-interop-observer host-interop-observer)
                    :allow (when allow (process-permissions (:allow ctx) allow))
                    :deny (when deny (process-permissions (:deny ctx) deny))
                    :reify-fn reify-fn

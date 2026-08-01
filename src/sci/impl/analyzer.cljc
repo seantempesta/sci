@@ -54,6 +54,11 @@
 
 (declare analyze analyze-children analyze-call return-call return-map)
 
+(defn- observe-host-interop! [ctx]
+  (when-let [observer (:host-interop-observer ctx)]
+    (observer))
+  nil)
+
 (defn analyze-children-tail [ctx children]
   (let [rt (recur-target ctx)
         non-tail-ctx (without-recur-target ctx)
@@ -1114,6 +1119,7 @@
           :tag (:tag (meta expr))}))))
 
 (defn analyze-dot [ctx [_dot instance-expr method-expr & args :as expr]]
+  (observe-host-interop! ctx)
   (let [ctx (without-recur-target ctx)
         [method-expr & args] (if (seq? method-expr) method-expr
                                  (cons method-expr args))
@@ -1260,6 +1266,7 @@
                 "Malformed member expression, expecting (.member target ...)")))
   #?(:cljd (analyze-dot ctx (with-meta (list '. obj (cons (symbol (subs (name method-name) 1)) args)) (meta expr)))
      :clj (let [ctx (without-recur-target ctx)
+                _ (observe-host-interop! ctx)
                 method-sym (symbol (subs (name method-name) 1))
                 instance-expr (maybe-wrap-fi-adapter (resolve-tag-class ctx (analyze ctx obj)))
                 args (when args (analyze-children ctx args))]
@@ -1295,7 +1302,9 @@
                                 nil))
                  (throw-error-with-location (str "Unable to resolve classname: " class-sym) class-sym)))
        :clj (if-let [class (:class (interop/resolve-class-opts ctx class-sym))]
-              (invoke-constructor-node ctx class args)
+              (do
+                (observe-host-interop! ctx)
+                (invoke-constructor-node ctx class args))
               (if-let [record (records/resolve-record-class ctx class-sym)]
                 (let [args (analyze-children ctx args)]
                   ;; _ctx expr f analyzed-children stack
@@ -1805,6 +1814,7 @@
 #?(:cljd nil
    :clj
    (defn analyze-interop [ctx expr [^Class clazz meth]]
+     (observe-host-interop! ctx)
      (let [meth (str meth)
            stack (utils/stack-frame (meta expr) nil)]
        (cond (str/starts-with? meth ".")
@@ -1966,7 +1976,8 @@
                            (analyze-dot ctx (with-meta (list* '. clazz meth (rest expr))
                                               (assoc m :class-expr class-expr)))))
                       #?@(:clj [(and f-meta (:sci.impl.analyzer/interop f-meta))
-                                (let [[obj & args] (analyze-children ctx (rest expr))
+                                (let [_ (observe-host-interop! ctx)
+                                      [obj & args] (analyze-children ctx (rest expr))
                                       meth (-> (second f)
                                                str
                                                (subs 1))
@@ -2013,7 +2024,9 @@
                                                                        args arg-count arg-types))
                                      stack)))])
                       #?@(:clj [(and f-meta (:sci.impl.analyzer/invoke-constructor f-meta))
-                                (invoke-constructor-node ctx (first f) (rest expr))])
+                                (do
+                                  (observe-host-interop! ctx)
+                                  (invoke-constructor-node ctx (first f) (rest expr)))])
                       (and (not eval?) ;; the symbol is not a binding
                            (symbol? f)
                            (or

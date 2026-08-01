@@ -291,6 +291,9 @@
 
   - `:interrupt-fn`: a zero-arg fn called on every interpreted `fn` entry / `loop` entry
 
+  - `:host-interop-observer`: a zero-arg observation fn called when analysis
+  resolves a host interop expression. Its return value is ignored.
+
   - `:unrestricted`: when `true`, evaluated code may mutate built-in vars
   and CLJS instance interop skips `:classes` checks. Off by default.
   Applies only to this context: a context created during an unrestricted
