@@ -59,6 +59,11 @@
     (observer))
   nil)
 
+(defn- built-in-call-symbol [f]
+  (when (and (utils/var? f)
+             (:sci/built-in (meta f)))
+    (vars/toSymbol f)))
+
 (defn analyze-children-tail [ctx children]
   (let [rt (recur-target ctx)
         non-tail-ctx (without-recur-target ctx)
@@ -1710,8 +1715,11 @@
                                                 ~(gen-fused-node i nil)
                                                 ~(gen-node i eval-arg))))))]
       `(defn ~'return-call
-         ~'[_ctx expr f analyzed-children stack wrap]
-         (let [node#
+         ~'[ctx expr f analyzed-children stack wrap]
+         (let [observer# (:built-in-call-observer ~'ctx)
+               built-in-call-symbol# (when observer#
+                                       (built-in-call-symbol ~'f))
+               node#
                (case (count ~'analyzed-children)
                  ~@(concat
                     (mapcat (fn [[i binds]]
@@ -1734,6 +1742,12 @@
                         (sci.impl.types/->Node
                          (eval/fn-call ~'ctx ~'bindings ~'f ~'analyzed-children)
                          ~'stack))]))
+               node# (if built-in-call-symbol#
+                       (sci.impl.types/->Node
+                        (do (observer# built-in-call-symbol#)
+                            (t/eval node# ~'ctx ~'bindings))
+                        ~'stack)
+                       node#)
                tag# ~'(:tag (meta expr))]
            (cond-> node#
              tag# (with-meta {:tag tag#})))))))

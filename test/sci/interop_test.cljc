@@ -37,6 +37,18 @@
        (is (= 4 @observations)
            "merge-opts can remove the observation without changing interop"))))
 
+(deftest built-in-call-observer-test
+  (let [calls (atom [])
+        ctx (sci/init {:built-in-call-observer #(swap! calls conj %)})]
+    (is (symbol? (sci/eval-string* ctx "(gensym \"observed\")")))
+    (is (= ['clojure.core/gensym] @calls))
+    (reset! calls [])
+    (sci/eval-string* ctx "(def delayed-built-in (fn [] (rand)))")
+    (is (empty? @calls)
+        "analysis of an uninvoked function body is not an execution")
+    (is (number? (sci/eval-string* ctx "(delayed-built-in)")))
+    (is (= ['clojure.core/rand] @calls))))
+
 #?(:clj
    (deftest instance-method-config-cache-test
      (testing "polymorphic call site stays correct with a closed class elsewhere"

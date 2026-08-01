@@ -210,6 +210,7 @@
                         check-permissions
                         interrupt-fn
                         host-interop-observer
+                        built-in-call-observer
                         unrestricted
                         recur-target
                         params
@@ -217,9 +218,12 @@
                         closure-bindings
                         fn-expr]))
 
-(defn ->ctx [bindings env features readers check-permissions? & {:keys [interrupt-fn host-interop-observer]}]
+(defn ->ctx [bindings env features readers check-permissions? & {:keys [interrupt-fn
+                                                                        host-interop-observer
+                                                                        built-in-call-observer]}]
   #?(:clj (->Ctx bindings env features readers false check-permissions? interrupt-fn
                  host-interop-observer
+                 built-in-call-observer
                  nil nil nil nil nil nil)
      :default {:bindings bindings
                :env env
@@ -227,7 +231,8 @@
                :readers readers
                :check-permissions check-permissions?
                :interrupt-fn interrupt-fn
-               :host-interop-observer host-interop-observer}))
+               :host-interop-observer host-interop-observer
+               :built-in-call-observer built-in-call-observer}))
 
 (def default-ns-aliases
   #?(:cljd {;; in SCI the core namespace is always called clojure.core
@@ -252,6 +257,7 @@
            deftype-fn
            interrupt-fn
            host-interop-observer
+           built-in-call-observer
            unrestricted
            #?(:cljs async-load-fn)
            #?(:cljs js-libs)
@@ -267,7 +273,8 @@
                      load-fn #?(:cljs async-load-fn) #?(:cljs js-libs) ns-aliases)
         ctx (assoc (->ctx {} env features readers (or allow deny)
                           :interrupt-fn interrupt-fn
-                          :host-interop-observer host-interop-observer)
+                          :host-interop-observer host-interop-observer
+                          :built-in-call-observer built-in-call-observer)
                    :allow (when allow (process-permissions #{} allow))
                    :deny (when deny (process-permissions #{} deny))
                    :reify-fn (or reify-fn default-reify-fn)
@@ -306,10 +313,14 @@
         host-interop-observer (if (contains? opts :host-interop-observer)
                                 (:host-interop-observer opts)
                                 (:host-interop-observer ctx))
+        built-in-call-observer (if (contains? opts :built-in-call-observer)
+                                 (:built-in-call-observer opts)
+                                 (:built-in-call-observer ctx))
         unrestricted (if (contains? opts :unrestricted) (:unrestricted opts) (:unrestricted ctx))
         ctx (assoc (->ctx {} !env features readers (or (:check-permissions ctx) allow deny)
                           :interrupt-fn interrupt-fn
-                          :host-interop-observer host-interop-observer)
+                          :host-interop-observer host-interop-observer
+                          :built-in-call-observer built-in-call-observer)
                    :allow (when allow (process-permissions (:allow ctx) allow))
                    :deny (when deny (process-permissions (:deny ctx) deny))
                    :reify-fn reify-fn

@@ -294,6 +294,11 @@
   - `:host-interop-observer`: a zero-arg observation fn called when analysis
   resolves a host interop expression. Its return value is ignored.
 
+  - `:built-in-call-observer`: a one-arg observation fn called with the fully
+  qualified symbol of each SCI built-in Var when that call executes. Merely
+  analyzing a call inside an uninvoked function body does not notify it. Its
+  return value is ignored.
+
   - `:unrestricted`: when `true`, evaluated code may mutate built-in vars
   and CLJS instance interop skips `:classes` checks. Off by default.
   Applies only to this context: a context created during an unrestricted
