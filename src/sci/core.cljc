@@ -269,6 +269,11 @@
    (store/with-ctx ctx
      (namespaces/sci-intern sci-ns name val))))
 
+(defn bind-root!
+  "Binds a sci var root in ctx without mutating an inherited var."
+  [ctx sci-var val]
+  (utils/bind-root! ctx sci-var val))
+
 (defn eval-string
   "Evaluates string `s` as one or multiple Clojure expressions using the Small Clojure Interpreter.
 
@@ -324,11 +329,12 @@
   (opts/merge-opts ctx opts))
 
 (defn fork
-  "Forks a context (as produced with `init`) into a new context. Any new
-  vars created in the new context won't be visible in the original
-  context."
+  "Forks a context (as produced with `init`) into a new context. New and
+  redefined vars in the new context won't be visible in the original context."
   [ctx]
-  (update ctx :env (fn [env] (atom @env))))
+  (update ctx :env
+          (fn [env]
+            (atom (assoc @env :sci/generation (utils/next-generation))))))
 
 (defn eval-string*
   "Evaluates string `s` in the context of `ctx` (as produced with

@@ -613,10 +613,12 @@
    (let [ctx (store/get-ctx)
          ns (sci-the-ns* ctx ns)
          ns-name (types/getName ns)
-         env (:env ctx)]
+         env (:env ctx)
+         var-meta (utils/generation-meta @env
+                                         (assoc (meta var-sym) :ns ns))]
      (or (get-in @env [:namespaces ns-name var-sym])
          (let [var-name (symbol (str ns-name) (str var-sym))
-               new-var (sci.impl.utils/new-var var-name nil (assoc (meta var-sym) :ns ns))]
+               new-var (sci.impl.utils/new-var var-name nil var-meta)]
            (sci.impl.vars/unbind new-var)
            (swap! env assoc-in [:namespaces ns-name var-sym] new-var)
            new-var))))
@@ -624,12 +626,13 @@
    (let [ctx (store/get-ctx)
          ns (sci-the-ns* ctx ns)
          ns-name (types/getName ns)
-         env (:env ctx)]
+         env (:env ctx)
+         var-meta (utils/generation-meta @env
+                                         (assoc (meta var-sym) :ns ns))]
      (or (when-let [v (get-in @env [:namespaces ns-name var-sym])]
-           (sci.impl.vars/bindRoot v val)
-           v)
+           (utils/bind-root! ctx v val))
          (let [var-name (symbol (str ns-name) (str var-sym))
-               new-var (sci.impl.utils/new-var var-name val (assoc (meta var-sym) :ns ns))]
+               new-var (sci.impl.utils/new-var var-name val var-meta)]
            (swap! env assoc-in [:namespaces ns-name var-sym] new-var)
            new-var)))))
 
@@ -791,9 +794,10 @@
 
 (defn sci-with-redefs-fn
   [binding-map func]
-  (let [root-bind (fn [m]
+  (let [ctx (store/get-ctx)
+        root-bind (fn [m]
                     (doseq [[a-var a-val] m]
-                      (sci.impl.vars/bindRoot a-var a-val)))
+                      (utils/bind-root! ctx a-var a-val)))
         old-vals (zipmap (keys binding-map)
                          (map #(sci.impl.vars/getRawRoot %) (keys binding-map)))]
     (try
@@ -808,6 +812,32 @@
      ~(zipmap (map #(list `var %) (take-nth 2 bindings))
               (take-nth 2 (next bindings)))
      (fn [] ~@body)))
+
+(defn sci-alter-var-root
+  ([v f]
+   (let [ctx (store/get-ctx)]
+     #?(:cljd (let [val (f (vars/getRawRoot v))]
+                (utils/bind-root! ctx v val)
+                val)
+        :clj (locking v
+               (let [val (f (vars/getRawRoot v))]
+                 (utils/bind-root! ctx v val)
+                 val))
+        :cljs (let [val (f (vars/getRawRoot v))]
+                (utils/bind-root! ctx v val)
+                val))))
+  ([v f & args]
+   (let [ctx (store/get-ctx)]
+     #?(:cljd (let [val (apply f (vars/getRawRoot v) args)]
+                (utils/bind-root! ctx v val)
+                val)
+        :clj (locking v
+               (let [val (apply f (vars/getRawRoot v) args)]
+                 (utils/bind-root! ctx v val)
+                 val))
+        :cljs (let [val (apply f (vars/getRawRoot v) args)]
+                (utils/bind-root! ctx v val)
+                val)))))
 
 ;;;; End binding vars
 
@@ -1661,7 +1691,8 @@
      'all-ns (copy-var sci-all-ns clojure-core-ns {:name 'all-ns})
      'alter-meta! #?(:cljd (new-var 'alter-meta! sci.impl.utils/alter-meta!* clojure-core-ns)
                      :default (copy-core-var alter-meta!))
-     'alter-var-root (copy-core-var sci.impl.vars/alter-var-root)
+     'alter-var-root (copy-var sci-alter-var-root clojure-core-ns
+                               {:name 'alter-var-root})
      'amap (macrofy 'amap amap*)
      #?@(:cljd [] :default ['ancestors (copy-var hierarchies/ancestors* clojure-core-ns {:name 'ancestors})])
      'and (macrofy 'and and*)

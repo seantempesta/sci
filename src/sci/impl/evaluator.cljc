@@ -30,12 +30,20 @@
         cnn (types/getName (:ns m))
         assoc-in-env
         (fn [env]
-          (let [the-current-ns (get (get env :namespaces) cnn)
+          (let [m (utils/generation-meta env m)
+                the-current-ns (get (get env :namespaces) cnn)
                 prev (get the-current-ns var-name)
-                prev (if-not (utils/var? prev)
+                prev (cond
+                       (not (utils/var? prev))
                        (let [m (meta prev)]
                          (lang/->Var prev var-name m false false nil (:ns m)))
-                       prev)
+
+                       (and (not (vars/built-in-var? (meta prev)))
+                            (not= (:sci/generation (meta prev))
+                                  (:sci/generation env)))
+                       (lang/->Var @prev var-name m false false nil (:ns m))
+
+                       :else prev)
                 v (do (when-not (identical? utils/var-unbound init)
                         (vars/bindRoot prev init))
                       (utils/reset-meta!* prev m)

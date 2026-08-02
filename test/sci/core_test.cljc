@@ -1427,6 +1427,62 @@
            #?(:cljd cljd.core/ExceptionInfo :clj Exception :cljs js/Error)
            #"Unable to resolve symbol: y" (sci/eval-string* ctx "y"))))))
 
+(deftest fork-copy-on-write-test
+  (let [parent (sci/init {})
+        _ (sci/eval-string*
+           parent
+           "(def shared :parent) (def bound :parent) (def interned :parent)")
+        forked (sci/fork parent)]
+    (is (identical? (sci/resolve parent 'shared)
+                    (sci/resolve forked 'shared))
+        "an untouched var remains structurally shared")
+    (sci/eval-string* forked "(def fork-only :fork-only)")
+    (sci/eval-string* forked "(def shared :fork)")
+    (is (nil? (sci/resolve parent 'fork-only)))
+    (is (= :parent (sci/eval-string* parent "shared")))
+    (is (= :fork (sci/eval-string* forked "shared")))
+    (is (not (identical? (sci/resolve parent 'shared)
+                         (sci/resolve forked 'shared))))
+    (let [bound-var (sci/bind-root! forked
+                                    (sci/resolve forked 'bound)
+                                    :fork-bound)]
+      (is (identical? bound-var (sci/resolve forked 'bound)))
+      (is (= :parent (sci/eval-string* parent "bound")))
+      (is (= :fork-bound (sci/eval-string* forked "bound"))))
+    (let [interned-var (sci/intern forked 'user 'interned :fork-interned)
+          new-var (sci/intern forked 'user 'intern-only :fork-only)]
+      (is (identical? interned-var (sci/resolve forked 'interned)))
+      (is (= :parent (sci/eval-string* parent "interned")))
+      (is (= :fork-interned (sci/eval-string* forked "interned")))
+      (is (nil? (sci/resolve parent 'intern-only)))
+      (is (= (:sci/generation @(:env forked))
+             (:sci/generation (meta new-var)))
+          "a newly interned var is owned by the fork generation"))))
+
+(deftest fork-interpreted-root-mutations-are-copy-on-write-test
+  (let [parent (sci/init {})
+        _ (sci/eval-string* parent "(def altered :parent) (def rebound :parent)")
+        altered-var (sci/resolve parent 'altered)
+        writes (atom [])
+        altered-fork (sci/fork parent)
+        rebound-fork (sci/fork parent)]
+    (add-watch altered-var ::parent-write
+               (fn [_ _ old-value new-value]
+                 (swap! writes conj [old-value new-value])))
+    (try
+      (sci/eval-string*
+       rebound-fork
+       "(with-redefs [altered :temporary] altered)")
+      (is (empty? @writes)
+          "with-redefs never mutates the inherited parent var")
+      (sci/eval-string*
+       altered-fork
+       "(alter-var-root #'altered (constantly :fork-altered))")
+      (is (= :parent (sci/eval-string* parent "altered")))
+      (is (= :fork-altered (sci/eval-string* altered-fork "altered")))
+      (finally
+        (remove-watch altered-var ::parent-write)))))
+
 (defmacro do-twice [x] `(do ~x ~x))
 (defn ^:sci/macro do-twice* [_ _ x] `(do ~x ~x))
 (def ^:dynamic *foo* 1)
