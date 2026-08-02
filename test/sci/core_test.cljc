@@ -1332,6 +1332,32 @@
        #?(:cljd cljd.core/ExceptionInfo :clj Exception :cljs js/Error) #"read-only"
        (tu/eval* "(alter-meta! #'-> dissoc :macro)" {}))))
 
+#?(:clj
+   (deftest independent-contexts-have-no-shared-writable-stock-vars
+     (let [ctx-a (sci/init {})
+           ctx-b (sci/init {})
+           shared-writable
+           (for [[ns-sym ns-map] (:namespaces @(:env ctx-a))
+                 [sym var-a] ns-map
+                 :let [var-b (get-in @(:env ctx-b)
+                                     [:namespaces ns-sym sym])]
+                 :when (and (instance? sci.lang.Var var-a)
+                            (identical? var-a var-b)
+                            (not (:sci/built-in (meta var-a))))]
+             (symbol (str ns-sym) (str sym)))
+           before (sci/eval-string* ctx-b
+                                    "(clojure.walk/macroexpand-all '(when true :ok))")]
+       (is (empty? shared-writable) (pr-str (sort shared-writable)))
+       (is (thrown-with-msg?
+            Exception #"read-only"
+            (sci/eval-string*
+             ctx-a
+             "(alter-var-root #'clojure.walk/macroexpand-all identity)")))
+       (is (= before
+              (sci/eval-string*
+               ctx-b
+               "(clojure.walk/macroexpand-all '(when true :ok))"))))))
+
 ;; TODO:cljd cljd.edn read-string has no opts arity
 #?(:cljd nil :default
 (deftest tagged-literal-test

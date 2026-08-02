@@ -849,22 +849,28 @@
 
 ;;;;
 
+(defn- built-in-var [v]
+  (when-not (:sci/built-in (meta v))
+    (sci.impl.utils/reset-meta!*
+     v (assoc (meta v) :sci/built-in true)))
+  v)
+
 #?(:clj
    (def clojure-lang
      {:private true
       :obj (sci.lang/->Namespace 'clojure.lang nil)
       ;; IDeref as protocol instead of class
-      'IDeref core-protocols/deref-protocol
+      'IDeref (built-in-var core-protocols/deref-protocol)
       'deref core-protocols/deref
       ;; IAtom as protocol instead of class
-      'IAtom core-protocols/swap-protocol
+      'IAtom (built-in-var core-protocols/swap-protocol)
       'swap core-protocols/swap
       'reset core-protocols/reset
       'compareAndSet core-protocols/compareAndSet
-      'IAtom2 core-protocols/iatom2-protocol
+      'IAtom2 (built-in-var core-protocols/iatom2-protocol)
       'resetVals core-protocols/resetVals
       'swapVals core-protocols/swapVals
-      'IFn core-protocols/ifn-protocol
+      'IFn (built-in-var core-protocols/ifn-protocol)
       'invoke (new-var 'invoke types/sci-invoke)
       'applyTo (new-var 'applyTo types/sci-apply-to)}))
 
@@ -1525,11 +1531,11 @@
                'read-line (copy-core-var sci.impl.io/read-line)])
      ;; end io
      ;; read
-     '*data-readers* parser/data-readers
-     '*default-data-reader-fn* parser/default-data-reader-fn
-     '*read-eval* parser/read-eval
-     '*reader-resolver* parser/reader-resolver
-     '*suppress-read* parser/suppress-read
+     '*data-readers* (built-in-var parser/data-readers)
+     '*default-data-reader-fn* (built-in-var parser/default-data-reader-fn)
+     '*read-eval* (built-in-var parser/read-eval)
+     '*reader-resolver* (built-in-var parser/reader-resolver)
+     '*suppress-read* (built-in-var parser/suppress-read)
      'read (copy-var read clojure-core-ns {:copy-meta-from 'clojure.core/read})
      'read-string (copy-var read-string clojure-core-ns {:copy-meta-from 'clojure.core/read-string})
      #?@(:clj ['reader-conditional (copy-core-var reader-conditional)])
@@ -2108,8 +2114,9 @@
                 'unchecked-set (copy-var aset clojure-core-ns {:copy-meta-from 'clojure.core/unchecked-set})])
      #?@(:cljs ['undefined? (copy-core-var undefined?)])
      #?@(:cljd [] :default ['underive (copy-var hierarchies/underive* clojure-core-ns {:name 'underive})])
-     'unquote (doto (sci.impl.utils/new-var 'unquote nil {:ns clojure-core-ns})
-                (sci.impl.vars/unbind))
+     'unquote (built-in-var
+               (doto (sci.impl.utils/new-var 'unquote nil {:ns clojure-core-ns})
+                 (sci.impl.vars/unbind)))
      'use (copy-var use clojure-core-ns {:copy-meta-from 'clojure.core/use})
      'val (copy-core-var val)
      'vals (copy-core-var vals)
@@ -2458,7 +2465,8 @@
                   'macroexpand-all
                   {:ns clojure-walk-namespace
                    :name 'macroexpand-all
-                   :doc "Recursively performs all possible macroexpansions in form."}
+                   :doc "Recursively performs all possible macroexpansions in form."
+                   :sci/built-in true}
                   false
                   nil
                   nil

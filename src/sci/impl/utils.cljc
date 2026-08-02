@@ -319,7 +319,10 @@
   ([name init-val]
    (dynamic-var name init-val (meta name)))
   ([name init-val meta]
-   (let [meta (assoc meta :dynamic true :name (unqualify-symbol name))]
+   (let [meta (assoc meta
+                     :dynamic true
+                     :name (unqualify-symbol name)
+                     :sci/built-in true)]
      (lang/->Var init-val name meta false false nil (:ns meta)))))
 
 ;; foundational namespaces
