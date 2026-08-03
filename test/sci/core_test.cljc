@@ -1299,6 +1299,28 @@
   (is (true? (eval* "(doto (def x) (alter-meta! assoc :private true)) (:private (meta #'x))")))
   (is (true? (eval* "(doto (def x) (reset-meta! {:private true})) (:private (meta #'x))"))))
 
+#?(:clj
+   (defn compiled-var-meta-target [] :clean))
+
+#?(:clj
+   (deftest compiled-var-metadata-is-read-only-from-sci-test
+     (let [before (meta #'compiled-var-meta-target)
+           ctx (sci/init
+                {:namespaces
+                 {'meta.host
+                  {'target #'compiled-var-meta-target}}})]
+       (try
+         (doseq [source
+                 ["(alter-meta! #'meta.host/target assoc :poison true)"
+                  "(reset-meta! #'meta.host/target {:poison true})"]]
+           (is (thrown-with-msg?
+                Exception #"Compiled Var.*metadata is read-only from SCI"
+                (sci/eval-string* ctx source))
+               source)
+           (is (= before (meta #'compiled-var-meta-target)) source))
+         (finally
+           (reset-meta! #'compiled-var-meta-target before))))))
+
 (deftest could-not-resolve-symbol-test3
   (when-not tu/native?
     (is (thrown-with-data? #"resolve.*def"

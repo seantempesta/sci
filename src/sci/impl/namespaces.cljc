@@ -839,6 +839,27 @@
                 (utils/bind-root! ctx v val)
                 val)))))
 
+#?(:clj
+   (defn- refuse-compiled-var-metadata-write! [v]
+     (when (instance? clojure.lang.Var v)
+       (throw
+        (ex-info (str "Compiled Var " v
+                      " metadata is read-only from SCI. "
+                      "Define an SCI-local Var to own mutable metadata.")
+                 {:var v})))))
+
+#?(:clj
+   (defn- sci-alter-meta!
+     [iref f & args]
+     (refuse-compiled-var-metadata-write! iref)
+     (apply clojure.core/alter-meta! iref f args)))
+
+#?(:clj
+   (defn- sci-reset-meta!
+     [iref m]
+     (refuse-compiled-var-metadata-write! iref)
+     (clojure.core/reset-meta! iref m)))
+
 ;;;; End binding vars
 
 ;;;; Patch for symbol to make it work with sci vars
@@ -1690,7 +1711,9 @@
      'alias (copy-var sci-alias clojure-core-ns {:name 'alias})
      'all-ns (copy-var sci-all-ns clojure-core-ns {:name 'all-ns})
      'alter-meta! #?(:cljd (new-var 'alter-meta! sci.impl.utils/alter-meta!* clojure-core-ns)
-                     :default (copy-core-var alter-meta!))
+                     :clj (copy-var sci-alter-meta! clojure-core-ns
+                                    {:name 'alter-meta!})
+                     :cljs (copy-core-var alter-meta!))
      'alter-var-root (copy-var sci-alter-var-root clojure-core-ns
                                {:name 'alter-var-root})
      'amap (macrofy 'amap amap*)
@@ -2024,7 +2047,9 @@
      'remove-ns (copy-var sci-remove-ns clojure-core-ns {:name 'remove-ns})
      'require (copy-var require clojure-core-ns {:copy-meta-from 'clojure.core/require})
      'reset-meta! #?(:cljd (new-var 'reset-meta! sci.impl.utils/reset-meta!** clojure-core-ns)
-                     :default (copy-core-var reset-meta!))
+                     :clj (copy-var sci-reset-meta! clojure-core-ns
+                                    {:name 'reset-meta!})
+                     :cljs (copy-core-var reset-meta!))
      'rest (copy-core-var rest)
      'repeatedly (copy-core-var repeatedly)
      'reverse (copy-core-var reverse)
