@@ -1744,6 +1744,28 @@
                         (sci.impl.types/->Node
                          (eval/fn-call ~'ctx ~'bindings ~'f ~'analyzed-children)
                          ~'stack))]))
+               ;; Call-preparation hook. Only the direct call path (wrap is
+               ;; nil) whose callee is a Var carries a provable callee
+               ;; identity, which is what a hook keys on; every other shape
+               ;; keeps its existing behaviour untouched. Like the observer
+               ;; below, the hook is read from the runtime ctx.
+               node# (if (and (nil? ~'wrap) (utils/var? ~'f))
+                       (let [inner# node#
+                             children# ~'analyzed-children]
+                         (sci.impl.types/->Node
+                          (if-let [hook# (:call-preparation-hook ~'ctx)]
+                            (try
+                              (let [args# (mapv (fn [child#]
+                                                  (t/eval child# ~'ctx ~'bindings))
+                                                children#)
+                                    prepared# (hook# ~'ctx ~'f args#)]
+                                (if (reduced? prepared#)
+                                  (deref prepared#)
+                                  (apply ~'f prepared#)))
+                              ~catch-clause)
+                            (t/eval inner# ~'ctx ~'bindings))
+                          ~'stack))
+                       node#)
                node# (if built-in-call-symbol#
                        (let [inner# node#]
                          (sci.impl.types/->Node

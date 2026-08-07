@@ -306,6 +306,15 @@
   executing the call, so a node analyzed under one fork notifies the observer
   of whichever fork later runs it.
 
+  - `:call-preparation-hook`: a three-arg fn `(hook ctx var args)` called at
+  call time, on the thread performing the call, for every direct call whose
+  resolved callee is a Var. `ctx` is the context executing the call (the same
+  fork the node runs under, not the one it was analyzed under), `var` is the
+  resolved Var, and `args` is a vector of the already-evaluated arguments. It
+  returns the vector of arguments actually applied, or a `reduced` value which
+  becomes the call's result without entering the callee. Calls through a
+  computed callee, a self-reference, or a non-Var value are not hooked.
+
   - `:unrestricted`: when `true`, evaluated code may mutate built-in vars
   and CLJS instance interop skips `:classes` checks. Off by default.
   Applies only to this context: a context created during an unrestricted
