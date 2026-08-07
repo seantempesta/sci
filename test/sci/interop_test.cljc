@@ -5,6 +5,8 @@
    [clojure.string :as str]
    [clojure.test :as test :refer [are deftest is testing #?(:cljs async)]]
    [sci.core :as sci]
+   #?(:clj [sci.impl.analyzer :as analyzer])
+   #?(:clj [sci.impl.types :as types])
    [sci.test-utils :as tu]
    #?(:cljs [goog.object :as gobj]))
   #?(:clj (:import PublicFields)))
@@ -48,6 +50,29 @@
         "analysis of an uninvoked function body is not an execution")
     (is (number? (sci/eval-string* ctx "(delayed-built-in)")))
     (is (= ['clojure.core/rand] @calls))))
+
+;; JVM only, for the same reason built-in-call-observer-test above already
+;; fails under script/test/node: CLJS reaches a Var through the var-deref
+;; path, where return-call never sees a Var callee.
+#?(:clj
+   (deftest built-in-call-observer-runtime-ctx-test
+     (testing "one analyzed node notifies the observer of the fork executing it"
+       (let [alpha-calls (atom [])
+             beta-calls (atom [])
+             base (sci/init {})
+             node (analyzer/analyze base '(gensym "observed"))
+             alpha (assoc (sci/fork base)
+                          :built-in-call-observer #(swap! alpha-calls conj %))
+             beta (assoc (sci/fork base)
+                         :built-in-call-observer #(swap! beta-calls conj %))]
+         (is (symbol? (types/eval node alpha nil)))
+         (is (symbol? (types/eval node beta nil)))
+         (is (symbol? (types/eval node alpha nil)))
+         (is (= ['clojure.core/gensym 'clojure.core/gensym] @alpha-calls))
+         (is (= ['clojure.core/gensym] @beta-calls))
+         (is (symbol? (types/eval node base nil))
+             "a context with no observer runs the same node without notifying")
+         (is (= 2 (count @alpha-calls)))))))
 
 #?(:clj
    (deftest instance-method-config-cache-test

@@ -1716,9 +1716,11 @@
                                                 ~(gen-node i eval-arg))))))]
       `(defn ~'return-call
          ~'[ctx expr f analyzed-children stack wrap]
-         (let [observer# (:built-in-call-observer ~'ctx)
-               built-in-call-symbol# (when observer#
-                                       (built-in-call-symbol ~'f))
+         ;; The built-in call symbol is a property of the callee, so it is
+         ;; resolved once here, at analysis time. The observer itself is not:
+         ;; one analyzed node may be executed under any fork, and forks carry
+         ;; their own observers, so the node reads it from the runtime ctx.
+         (let [built-in-call-symbol# (built-in-call-symbol ~'f)
                node#
                (case (count ~'analyzed-children)
                  ~@(concat
@@ -1743,10 +1745,12 @@
                          (eval/fn-call ~'ctx ~'bindings ~'f ~'analyzed-children)
                          ~'stack))]))
                node# (if built-in-call-symbol#
-                       (sci.impl.types/->Node
-                        (do (observer# built-in-call-symbol#)
-                            (t/eval node# ~'ctx ~'bindings))
-                        ~'stack)
+                       (let [inner# node#]
+                         (sci.impl.types/->Node
+                          (do (when-let [observer# (:built-in-call-observer ~'ctx)]
+                                (observer# built-in-call-symbol#))
+                              (t/eval inner# ~'ctx ~'bindings))
+                          ~'stack))
                        node#)
                tag# ~'(:tag (meta expr))]
            (cond-> node#

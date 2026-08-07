@@ -302,7 +302,9 @@
   - `:built-in-call-observer`: a one-arg observation fn called with the fully
   qualified symbol of each SCI built-in Var when that call executes. Merely
   analyzing a call inside an uninvoked function body does not notify it. Its
-  return value is ignored.
+  return value is ignored. The observer is read from the context that is
+  executing the call, so a node analyzed under one fork notifies the observer
+  of whichever fork later runs it.
 
   - `:unrestricted`: when `true`, evaluated code may mutate built-in vars
   and CLJS instance interop skips `:classes` checks. Off by default.
