@@ -245,6 +245,46 @@
      :cljs {;; in SCI the core namespace is always called clojure.core
             'cljs.core 'clojure.core}))
 
+(def init-option-keys
+  "Every option key `init` understands. Anything else is refused rather than
+  dropped: an option that is silently ignored produces a context that looks
+  configured and is not."
+  #{:bindings :env
+    :allow :deny
+    :aliases
+    :namespaces
+    :classes
+    :imports
+    :features
+    :load-fn
+    :readers
+    :reify-fn
+    :proxy-fn
+    :deftype-fn
+    :interrupt-fn
+    :host-interop-observer
+    :built-in-call-observer
+    :call-preparation-hook
+    :unrestricted
+    #?@(:cljs [:async-load-fn :js-libs])
+    :ns-aliases})
+
+(def merge-option-keys
+  "Every option key `merge-opts` understands. See `init-option-keys`."
+  (disj init-option-keys :env :proxy-fn))
+
+(defn check-option-keys!
+  "Throw unless every key of `opts` is in `known`, naming the offenders."
+  [what known opts]
+  (when-let [unknown (seq (remove known (keys opts)))]
+    (throw (ex-info (str "Unsupported option"
+                         (when (next unknown) "s")
+                         " passed to " what ": "
+                         (pr-str (vec (sort-by str unknown))))
+                    {:unsupported-options (vec (sort-by str unknown))
+                     :supported-options (vec (sort-by str known))})))
+  nil)
+
 (defn init
   "Initializes options"
   [{:keys [bindings env
@@ -266,7 +306,9 @@
            unrestricted
            #?(:cljs async-load-fn)
            #?(:cljs js-libs)
-           ns-aliases]}]
+           ns-aliases]
+    :as opts}]
+  (check-option-keys! "sci/init" init-option-keys opts)
   (let [env (or env (atom {}))
         imports (merge default-imports imports)
         ns-aliases (merge default-ns-aliases ns-aliases)
@@ -291,6 +333,7 @@
     ctx))
 
 (defn merge-opts [ctx opts]
+  (check-option-keys! "sci/merge-opts" merge-option-keys opts)
   (let [!env (:env ctx)
         env @!env
         {:keys [bindings

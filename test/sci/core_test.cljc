@@ -589,10 +589,15 @@
                                  d))))))
 
 (deftest disable-arity-checks-test
-  (is (thrown-with-msg? #?(:cljd cljd.core/ExceptionInfo :clj Exception :cljs js/Error)
-                        #"Cannot call foo with 1 arguments"
-                        (sci/eval-string "(defn foo ([]) ([x y])) (foo 1)"
-                                         {:disable-arity-checks true}))))
+  (testing "arity checks are always taken care of by the analyzer"
+    (is (thrown-with-msg? #?(:cljd cljd.core/ExceptionInfo :clj Exception :cljs js/Error)
+                          #"Cannot call foo with 1 arguments"
+                          (sci/eval-string "(defn foo ([]) ([x y])) (foo 1)"))))
+  (testing "the removed :disable-arity-checks option is refused, not ignored"
+    (is (thrown-with-msg? #?(:cljd cljd.core/ExceptionInfo :clj Exception :cljs js/Error)
+                          #"Unsupported option passed to sci/init: \[:disable-arity-checks\]"
+                          (sci/eval-string "(defn foo ([]) ([x y])) (foo 1)"
+                                           {:disable-arity-checks true})))))
 
 (deftest macro-test
   (when-not tu/native?
@@ -1095,8 +1100,7 @@
                                 :cljs (1 1)
                                 :cljd (throw (ex-info \"boom\" {})))
                           (catch #?(:clj ArithmeticException :cljs js/Error :cljd ExceptionInfo) _ 0))"
-                       {:read-cond :allow
-                        :features #?(:cljd #{:cljd}
+                       {:features #?(:cljd #{:cljd}
                                      :clj #{:clj}
                                      :cljs #{:cljs})})))
   (is (= 4 (eval* "(def x 1)
@@ -2199,6 +2203,22 @@
 #?(:cljs
    (deftest js-in-test
      (is (true? (sci/eval-string "(js-in \"foo\" #js {:foo 1})")))))
+
+(deftest unsupported-option-test
+  (testing "an option key init does not understand is refused, not dropped"
+    (is (thrown-with-msg? Exception #"Unsupported option passed to sci/init: \[:my/environment\]"
+                          (sci/init {:my/environment {:db :alpha}})))
+    (is (= {:unsupported-options [:bogus :my/environment]}
+           (select-keys (try (sci/init {:bogus 1 :my/environment 2})
+                             (catch Exception e (ex-data e)))
+                        [:unsupported-options]))))
+  (testing "merge-opts refuses the same way"
+    (is (thrown-with-msg? Exception #"Unsupported option passed to sci/merge-opts"
+                          (sci/merge-opts (sci/init {}) {:my/environment 1}))))
+  (testing "supported options still init"
+    (is (= 3 (sci/eval-string* (sci/init {:namespaces {}
+                                          :call-preparation-hook nil})
+                               "(+ 1 2)")))))
 
 ;;;; Scratch
 
