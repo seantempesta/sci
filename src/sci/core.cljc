@@ -304,6 +304,15 @@
   analyzing a call inside an uninvoked function body does not notify it. Its
   return value is ignored.
 
+  - `:call-preparation-hook`: a three-arg fn `(hook ctx var args)` called at
+  call time, on the thread performing the call, for every direct call whose
+  resolved callee is a Var. `ctx` is the RUNTIME context (the executing fork),
+  `var` is the resolved Var (its identity and metadata are the call's provable
+  identity), and `args` is a vector of the already-evaluated arguments. It
+  returns the vector of arguments actually applied, or a `reduced` value which
+  is returned as the call's result without entering the callee. Calls through
+  a computed callee, a self-reference, or a non-Var value are not hooked.
+
   - `:unrestricted`: when `true`, evaluated code may mutate built-in vars
   and CLJS instance interop skips `:classes` checks. Off by default.
   Applies only to this context: a context created during an unrestricted

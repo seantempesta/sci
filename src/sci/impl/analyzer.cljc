@@ -1748,6 +1748,28 @@
                             (t/eval node# ~'ctx ~'bindings))
                         ~'stack)
                        node#)
+               ;; Call-preparation hook. Applies only to the direct call path
+               ;; (wrap is nil) whose callee is a Var, i.e. the only shape that
+               ;; carries a provable program-function identity. The hook itself
+               ;; is read from the RUNTIME ctx inside the node body, never from
+               ;; the analysis ctx, so a node shared across forks always
+               ;; consults the fork that is executing it.
+               node# (if (and (nil? ~'wrap) (utils/var? ~'f))
+                       (let [inner# node#
+                             children# ~'analyzed-children]
+                         (sci.impl.types/->Node
+                          (let [hook# (:call-preparation-hook ~'ctx)]
+                            (if hook#
+                              (try
+                                (let [args# (mapv (fn [c#] (t/eval c# ~'ctx ~'bindings)) children#)
+                                      prepared# (hook# ~'ctx ~'f args#)]
+                                  (if (reduced? prepared#)
+                                    (deref prepared#)
+                                    (apply ~'f prepared#)))
+                                ~catch-clause)
+                              (t/eval inner# ~'ctx ~'bindings)))
+                          ~'stack))
+                       node#)
                tag# ~'(:tag (meta expr))]
            (cond-> node#
              tag# (with-meta {:tag tag#})))))))

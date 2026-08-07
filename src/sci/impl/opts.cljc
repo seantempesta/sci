@@ -211,6 +211,7 @@
                         interrupt-fn
                         host-interop-observer
                         built-in-call-observer
+                        call-preparation-hook
                         unrestricted
                         recur-target
                         params
@@ -220,10 +221,12 @@
 
 (defn ->ctx [bindings env features readers check-permissions? & {:keys [interrupt-fn
                                                                         host-interop-observer
-                                                                        built-in-call-observer]}]
+                                                                        built-in-call-observer
+                                                                        call-preparation-hook]}]
   #?(:clj (->Ctx bindings env features readers false check-permissions? interrupt-fn
                  host-interop-observer
                  built-in-call-observer
+                 call-preparation-hook
                  nil nil nil nil nil nil)
      :default {:bindings bindings
                :env env
@@ -232,7 +235,8 @@
                :check-permissions check-permissions?
                :interrupt-fn interrupt-fn
                :host-interop-observer host-interop-observer
-               :built-in-call-observer built-in-call-observer}))
+               :built-in-call-observer built-in-call-observer
+               :call-preparation-hook call-preparation-hook}))
 
 (def default-ns-aliases
   #?(:cljd {;; in SCI the core namespace is always called clojure.core
@@ -258,6 +262,7 @@
            interrupt-fn
            host-interop-observer
            built-in-call-observer
+           call-preparation-hook
            unrestricted
            #?(:cljs async-load-fn)
            #?(:cljs js-libs)
@@ -274,7 +279,8 @@
         ctx (assoc (->ctx {} env features readers (or allow deny)
                           :interrupt-fn interrupt-fn
                           :host-interop-observer host-interop-observer
-                          :built-in-call-observer built-in-call-observer)
+                          :built-in-call-observer built-in-call-observer
+                          :call-preparation-hook call-preparation-hook)
                    :allow (when allow (process-permissions #{} allow))
                    :deny (when deny (process-permissions #{} deny))
                    :reify-fn (or reify-fn default-reify-fn)
@@ -316,11 +322,15 @@
         built-in-call-observer (if (contains? opts :built-in-call-observer)
                                  (:built-in-call-observer opts)
                                  (:built-in-call-observer ctx))
+        call-preparation-hook (if (contains? opts :call-preparation-hook)
+                                (:call-preparation-hook opts)
+                                (:call-preparation-hook ctx))
         unrestricted (if (contains? opts :unrestricted) (:unrestricted opts) (:unrestricted ctx))
         ctx (assoc (->ctx {} !env features readers (or (:check-permissions ctx) allow deny)
                           :interrupt-fn interrupt-fn
                           :host-interop-observer host-interop-observer
-                          :built-in-call-observer built-in-call-observer)
+                          :built-in-call-observer built-in-call-observer
+                          :call-preparation-hook call-preparation-hook)
                    :allow (when allow (process-permissions (:allow ctx) allow))
                    :deny (when deny (process-permissions (:deny ctx) deny))
                    :reify-fn reify-fn
