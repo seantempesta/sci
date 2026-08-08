@@ -84,6 +84,25 @@
       (is (thrown? Exception (types/eval node base nil))
           "a context with no hook still sees the callee's real arity"))))
 
+(deftest host-var-callee-is-prepared-test
+  (testing "a compiled host Var installed straight into :namespaces is a
+            callee identity like any other"
+    (let [ctx (sci/init {:namespaces {'my {'read-rows #'read-rows
+                                           'annotate #'annotate}}
+                         :call-preparation-hook
+                         (fn [_ctx v args]
+                           (if (and (= 'sci.call-preparation-hook-test/read-rows
+                                       (symbol (str (:ns (meta v)))
+                                               (str (:name (meta v)))))
+                                    (= 1 (count args)))
+                             (into [:db-host] args)
+                             args))})]
+      (is (= {:read/from :db-host :read/query :q}
+             (sci/eval-string* ctx "(my/read-rows :q)"))
+          "keying only on sci.lang.Var would leave this call unprepared")
+      (is (= {:annotated 1} (sci/eval-string* ctx "(my/annotate 1)"))
+          "and an unclaimed host Var is still untouched"))))
+
 (deftest unhooked-call-shapes-test
   (let [ctx (hook-ctx (fn [_ctx _v _args] (reduced :hooked)))]
     (testing "a computed callee is not a Var and is not hooked"
