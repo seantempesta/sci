@@ -363,7 +363,10 @@
               m)]
     m))
 
-(defn single-arity-fn [bindings-fn fn-body fn-name self-ref-in-enclosed-idx self-ref? nsm fn-meta macro?
+(defn- with-root-data [f root-data-fn bindings]
+  (vary-meta f assoc :sci.impl/root-data (root-data-fn bindings)))
+
+(defn single-arity-fn [bindings-fn root-data-fn fn-body fn-name self-ref-in-enclosed-idx self-ref? nsm fn-meta macro?
                        #?@(:cljs [capture-pairs enclosed-array-cnt])]
   (let [fixed-arity (:fixed-arity fn-body)
         copy-enclosed->invocation (:copy-enclosed->invocation fn-body)
@@ -388,7 +391,8 @@
                                       :sci/macro macro?
                                       ;; added for better error reporting
                                       :sci.impl/inner-fn f))
-                   f)]
+                   f)
+               f (with-root-data f root-data-fn bindings)]
            (when self-ref?
              (aset #?(:cljd ^List enclosed-array :default ^objects enclosed-array)
                    self-ref-in-enclosed-idx
@@ -491,6 +495,13 @@
         ;; all closed over idens
         closed-over-idens (filter bound-idens (keys cb-idens))
         iden->invoke-idx (get-in @closure-bindings (conj (pop parents) :syms))
+        closed-over-bindings
+        (->> bindings
+             (filter (fn [[_sym iden]]
+                       (and (contains? (set closed-over-idens) iden)
+                            (contains? iden->invoke-idx iden))))
+             (sort-by (comp str first))
+             vec)
         ;; this represents the indices of enclosed values in old bindings
         ;; we need to copy those to a new array, the enclosed-array
         closed-over-iden->binding-idx (when iden->invoke-idx
@@ -502,6 +513,14 @@
         iden->enclosed-idx (if fn-name
                              (assoc iden->enclosed-idx fn-id closed-over-cnt)
                              iden->enclosed-idx)
+        root-data-fn
+        (fn [#?(:cljd bindings :clj ^objects bindings :cljs ^objects bindings)]
+          {:sci.root/form fn-expr
+           :sci.root/captures
+           (mapv (fn [[sym iden]]
+                   [sym (aget #?(:cljd ^List bindings :default ^objects bindings)
+                              (get iden->invoke-idx iden))])
+                 closed-over-bindings)})
         [bindings-fn enclosed-array-cnt #?(:cljs capture-pairs :default _capture-pairs)]
         (if (or self-ref? (seq closed-over-iden->binding-idx))
           (let [enclosed-array-cnt (cond-> closed-over-cnt
@@ -580,7 +599,7 @@
         nsm (utils/current-ns-name)
         self-ref-in-enclosed-idx (some-> enclosed-array-cnt dec)
         ret-node (if single-arity
-                   (single-arity-fn bindings-fn single-arity fn-name self-ref-in-enclosed-idx self-ref? nsm fn-meta macro?
+                   (single-arity-fn bindings-fn root-data-fn single-arity fn-name self-ref-in-enclosed-idx self-ref? nsm fn-meta macro?
                                     #?@(:cljs [capture-pairs enclosed-array-cnt]))
                    (let [arities (reduce
                                   (fn [arity-map fn-body]
@@ -615,7 +634,8 @@
                                                    :sci/macro macro?
                                                    ;; added for better error reporting
                                                    :sci.impl/inner-fn f))
-                                f)]
+                                f)
+                            f (with-root-data f root-data-fn bindings)]
                         (when self-ref?
                           (aset #?(:cljd ^List enclosed-array :default ^objects enclosed-array)
                                 self-ref-in-enclosed-idx

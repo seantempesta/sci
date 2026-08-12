@@ -13,6 +13,7 @@
    [edamame.core :as edamame]
    [edamame.impl.parser]
    [sci.ctx-store :as store]
+   [sci.impl.analyzer :as analyzer]
    [sci.impl.callstack :as cs]
    [sci.impl.interpreter :as i]
    [sci.impl.io :as sio]
@@ -835,6 +836,98 @@
 
 (defn resolve [ctx sym]
   (@utils/eval-resolve-state ctx {} sym))
+
+(def ^:private root-data-version 1)
+
+(defn- portable-var-meta [sci-var]
+  (let [m (meta sci-var)]
+    (cond-> (dissoc m :sci/generation)
+      (:ns m) (assoc :ns (t/getName (:ns m))))))
+
+(defn var-root-data
+  "Projects selected SCI Var roots into ordinary installation data.
+
+  Interpreted functions carry their analyzed closure inputs as data. A
+  function not created by SCI reports an explicit unrestorable reason."
+  [ctx qualified-symbols]
+  (mapv
+   (fn [qualified-symbol]
+     (let [sci-var (resolve ctx qualified-symbol)
+           root (when (utils/var? sci-var) (vars/getRawRoot sci-var))
+           function-data (when (fn? root) (:sci.impl/root-data (meta root)))
+           base {:sci.root/version root-data-version
+                 :sci.root/ns (some-> qualified-symbol namespace symbol)
+                 :sci.root/name (some-> qualified-symbol name symbol)
+                 :sci.root/meta (when sci-var (portable-var-meta sci-var))}]
+       (cond
+         (not (utils/var? sci-var))
+         (assoc base :sci.root/unrestorable-reason
+                (if (nil? sci-var)
+                  "The SCI Var does not exist in this context."
+                  "The resolved binding is not an SCI Var."))
+
+         function-data
+         (assoc base :sci.root/function function-data)
+
+         (fn? root)
+         (assoc base :sci.root/unrestorable-reason
+                "The function root was not created by SCI.")
+
+         :else
+         (assoc base :sci.root/value root))))
+   qualified-symbols))
+
+(defn- function-from-root-data [ctx namespace-name function-data]
+  (let [captures (:sci.root/captures function-data)
+        capture-bindings (into {} (map-indexed (fn [idx [sym _]] [sym idx]))
+                               captures)
+        upper-sym (gensym)
+        closure-bindings (volatile! {upper-sym {0 {:syms {}}}})
+        analysis-ctx (assoc ctx
+                            :id (or (:id ctx) (gensym))
+                            :bindings capture-bindings
+                            :parents [upper-sym 0]
+                            :closure-bindings closure-bindings)
+        bindings #?(:cljd (#/(List/filled dynamic) (count captures) nil)
+                    :default (object-array (count captures)))]
+    (doseq [[idx [_ value]] (map-indexed vector captures)]
+      (aset #?(:cljd ^List bindings :default ^objects bindings) idx value))
+    (vars/with-bindings
+      {utils/current-ns (create-ns namespace-name)}
+      (store/with-ctx analysis-ctx
+        (let [analyzed (analyzer/analyze analysis-ctx
+                                         (:sci.root/form function-data)
+                                         true)]
+          (t/eval analyzed analysis-ctx bindings))))))
+
+(defn install-var-roots!
+  "Installs projected SCI Var roots without evaluating their defining forms."
+  [ctx roots]
+  (doseq [{version :sci.root/version
+           namespace-name :sci.root/ns
+           intern-name :sci.root/name
+           var-meta :sci.root/meta
+           function-data :sci.root/function
+           reason :sci.root/unrestorable-reason
+           :as root} roots]
+    (when-not (= root-data-version version)
+      (throw (ex-info "Unsupported SCI root-data version."
+                      {:sci.root/version version
+                       :sci.root/supported-version root-data-version})))
+    (when reason
+      (throw (ex-info "Cannot install an unrestorable SCI Var root."
+                      {:sci.root/unrestorable-reason reason
+                       :sci.root/ns namespace-name
+                       :sci.root/name intern-name})))
+    (when-not (find-ns ctx namespace-name)
+      (add-namespace! ctx namespace-name {}))
+    (let [value (if function-data
+                  (function-from-root-data ctx namespace-name function-data)
+                  (:sci.root/value root))
+          name-with-meta (with-meta intern-name
+                           (dissoc var-meta :name :ns :sci/generation))]
+      (intern ctx namespace-name name-with-meta value)))
+  ctx)
 
 #?(:cljs
    (defn add-js-lib!

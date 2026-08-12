@@ -2,6 +2,7 @@
   (:require
    [clojure.set :as set]
    [clojure.string :as str]
+   #?(:clj [clojure.edn :as edn])
    [clojure.test :as test :refer [deftest is testing]]
    [sci.core :as sci]
    [sci.test-utils :as tu]
@@ -273,6 +274,33 @@
                ctx
                "[(resolve 'String) (join \"-\" [\"a\" \"b\"]) own]"
                {:ns (sci/create-ns 'state.snapshot)})))))))
+
+#?(:clj
+   (deftest var-root-data-roundtrip-installs-without-reexecuting-wrapper-test
+     (let [calls (atom 0)
+           ctx (sci/init {:namespaces
+                          {'probe {'observe! (fn [] (swap! calls inc) 41)}}})]
+       (sci/eval-string*
+        ctx
+        "(def ^:private f (let [captured (probe/observe!)] (fn [x] (+ captured x))))")
+       (sci/eval-string*
+        ctx
+        "(def recursive (fn recursive [n] (if (zero? n) 1 (* n (recursive (dec n))))))")
+       (let [root-data (-> (sci/var-root-data ctx ['user/f 'user/recursive])
+                           pr-str
+                           edn/read-string)
+             restored (sci/fork (sci/init {}))]
+         (sci/install-var-roots! restored root-data)
+         (is (= 1 @calls))
+         (is (= 42 (@(sci/resolve restored 'user/f) 1)))
+         (is (= 120 (@(sci/resolve restored 'user/recursive) 5)))
+         (is (true? (:private (meta (sci/resolve restored 'user/f)))))
+         (is (= "The resolved binding is not an SCI Var."
+                (:sci.root/unrestorable-reason
+                 (first
+                  (sci/var-root-data
+                   (sci/init {:namespaces {'user {'host-fn inc}}})
+                   ['user/host-fn])))))))))
 
 (deftest ns-map-test
   (is (eval* "(some? (get (ns-map *ns*) 'inc))"))
