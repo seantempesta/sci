@@ -1485,6 +1485,30 @@
              (:sci/generation (meta new-var)))
           "a newly interned var is owned by the fork generation"))))
 
+#?(:clj
+   (deftest fork-metadata-writes-are-copy-on-write-test
+     (let [parent (sci/init {})
+           _ (sci/eval-string* parent "(defn shared \"Parent.\" [] :parent)")
+           parent-var (sci/resolve parent 'shared)
+           altered (sci/fork parent)
+           reset (sci/fork parent)]
+       (sci/eval-string* altered "(alter-meta! #'shared assoc :doc \"Fork.\")")
+       (sci/eval-string* reset "(reset-meta! #'shared {:doc \"Reset.\"})")
+       (is (= "Parent." (:doc (meta parent-var)))
+           "an inherited var's metadata is never mutated in place")
+       (is (= "Parent." (sci/eval-string* parent "(:doc (meta #'shared))")))
+       (is (= "Fork." (sci/eval-string* altered "(:doc (meta #'shared))")))
+       (is (= "Reset." (sci/eval-string* reset "(:doc (meta #'shared))")))
+       (is (= :parent (sci/eval-string* altered "(shared)")) "the copy keeps the root")
+       (doseq [fork [altered reset]]
+         (is (= (:sci/generation @(:env fork))
+                (:sci/generation (meta (sci/resolve fork 'shared))))
+             "the copy is owned by the fork generation"))
+       (sci/eval-string* altered "(alter-meta! #'shared dissoc :sci/generation)")
+       (is (= (:sci/generation @(:env altered))
+              (:sci/generation (meta (sci/resolve altered 'shared))))
+           "a metadata write cannot remove the dependency-owned generation"))))
+
 (deftest fork-interpreted-root-mutations-are-copy-on-write-test
   (let [parent (sci/init {})
         _ (sci/eval-string* parent "(def altered :parent) (def rebound :parent)")

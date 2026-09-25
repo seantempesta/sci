@@ -359,24 +359,30 @@
 (defn generation-meta [env m]
   (assoc m :sci/generation (:sci/generation env)))
 
-(defn bind-root!
-  "Binds a var root owned by ctx, copying an inherited var before mutation."
-  [ctx sci-var val]
+(defn owned-var
+  "The var ctx may mutate for sci-var: sci-var itself when ctx's generation
+  owns it, else a copy stamped with that generation and installed in ctx's
+  namespace map, so an inherited var is never mutated in place."
+  [ctx sci-var]
   (let [env (:env ctx)
         env-value @env
         generation (:sci/generation env-value)]
     (if (= (:sci/generation (meta sci-var)) generation)
-      (do
-        (vars/bindRoot sci-var val)
-        sci-var)
+      sci-var
       (let [var-meta (generation-meta env-value (meta sci-var))
             var-name (vars/toSymbol sci-var)
             copied-var (new-var var-name (vars/getRawRoot sci-var) var-meta)
             ns-name (t/getName (:ns var-meta))
             intern-name (unqualify-symbol var-name)]
-        (vars/bindRoot copied-var val)
         (swap! env assoc-in [:namespaces ns-name intern-name] copied-var)
         copied-var))))
+
+(defn bind-root!
+  "Binds a var root owned by ctx, copying an inherited var before mutation."
+  [ctx sci-var val]
+  (let [owned (owned-var ctx sci-var)]
+    (vars/bindRoot owned val)
+    owned))
 
 (defn var? [x]
   (instance? #?(:cljd lang/Var :clj sci.lang.Var :cljs sci.lang.Var) x))
