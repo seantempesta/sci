@@ -1509,6 +1509,39 @@
               (:sci/generation (meta (sci/resolve altered 'shared))))
            "a metadata write cannot remove the dependency-owned generation"))))
 
+#?(:clj
+   (deftest fork-writes-through-an-inherited-handle-compose-test
+     (let [parent (sci/init {})
+           _ (sci/eval-string* parent "(defn shared \"Parent.\" [] :parent)")
+           parent-var (sci/resolve parent 'shared)
+           consecutive (sci/fork parent)
+           root-then-meta (sci/fork parent)]
+       (is (= {:a 1 :b 2}
+              (sci/eval-string*
+               consecutive
+               "(let [v #'shared] (alter-meta! v assoc :a 1) (alter-meta! v assoc :b 2)
+                  (select-keys (meta (resolve 'shared)) [:a :b]))"))
+           "a second write through the same inherited handle builds on the first")
+       (is (= [:fork "Fork."]
+              (sci/eval-string*
+               root-then-meta
+               "(let [v #'shared] (alter-var-root v (constantly (fn [] :fork)))
+                  (alter-meta! v assoc :doc \"Fork.\")
+                  [((deref (resolve 'shared))) (:doc (meta (resolve 'shared)))])"))
+           "a metadata write after a root write keeps the new root")
+       (is (= [:parent "Parent."] [(parent-var) (:doc (meta parent-var))])))))
+
+#?(:clj
+   (deftest root-writes-mark-a-var-rebound-until-it-is-redefined-test
+     (let [ctx (sci/init {})]
+       (sci/eval-string* ctx "(defn f [] :defined)")
+       (is (nil? (sci/eval-string* ctx "(:sci/rebound (meta #'f))")))
+       (is (true? (sci/eval-string* ctx "(do (alter-var-root #'f (constantly (fn [] :written))) (:sci/rebound (meta #'f)))")))
+       (is (true? (sci/eval-string* ctx "(do (alter-meta! #'f dissoc :sci/rebound) (:sci/rebound (meta #'f)))"))
+           "a metadata write cannot remove the stamp")
+       (is (nil? (sci/eval-string* ctx "(do (defn f [] :again) (:sci/rebound (meta #'f)))"))
+           "a definition sets the root and clears it"))))
+
 (deftest fork-interpreted-root-mutations-are-copy-on-write-test
   (let [parent (sci/init {})
         _ (sci/eval-string* parent "(def altered :parent) (def rebound :parent)")

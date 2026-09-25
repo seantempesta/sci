@@ -861,10 +861,11 @@
 
 #?(:clj
    (defn- keep-generation
-     "Keep the dependency-owned generation stamp through a metadata write."
+     "Keep the dependency-owned generation and rebound stamps through a
+     metadata write."
      [ref m]
-     (if-let [generation (and (utils/var? ref) (:sci/generation (meta ref)))]
-       (assoc m :sci/generation generation)
+     (if (utils/var? ref)
+       (merge m (select-keys (meta ref) [:sci/generation :sci/rebound]))
        m)))
 
 #?(:clj

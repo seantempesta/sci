@@ -359,29 +359,42 @@
 (defn generation-meta [env m]
   (assoc m :sci/generation (:sci/generation env)))
 
+(declare var?)
+
 (defn owned-var
   "The var ctx may mutate for sci-var: sci-var itself when ctx's generation
-  owns it, else a copy stamped with that generation and installed in ctx's
-  namespace map, so an inherited var is never mutated in place."
+  owns it; else the owned var already bound at its namespace and name in ctx
+  (an earlier write through the same inherited handle copied it there), so
+  consecutive writes compose; else a copy of the current binding (or of
+  sci-var when its name is unbound) stamped with ctx's generation and
+  installed in ctx's namespace map. An inherited var is never mutated."
   [ctx sci-var]
   (let [env (:env ctx)
         env-value @env
-        generation (:sci/generation env-value)]
-    (if (= (:sci/generation (meta sci-var)) generation)
+        generation (:sci/generation env-value)
+        owned? #(= (:sci/generation (meta %)) generation)]
+    (if (owned? sci-var)
       sci-var
-      (let [var-meta (generation-meta env-value (meta sci-var))
-            var-name (vars/toSymbol sci-var)
-            copied-var (new-var var-name (vars/getRawRoot sci-var) var-meta)
-            ns-name (t/getName (:ns var-meta))
-            intern-name (unqualify-symbol var-name)]
-        (swap! env assoc-in [:namespaces ns-name intern-name] copied-var)
-        copied-var))))
+      (let [var-name (vars/toSymbol sci-var)
+            ns-name (t/getName (:ns (meta sci-var)))
+            intern-name (unqualify-symbol var-name)
+            current (get-in env-value [:namespaces ns-name intern-name])
+            source (if (var? current) current sci-var)]
+        (if (owned? source)
+          source
+          (let [copied-var (new-var var-name (vars/getRawRoot source)
+                                    (generation-meta env-value (meta source)))]
+            (swap! env assoc-in [:namespaces ns-name intern-name] copied-var)
+            copied-var))))))
 
 (defn bind-root!
-  "Binds a var root owned by ctx, copying an inherited var before mutation."
+  "Binds a var root owned by ctx, copying an inherited var before mutation.
+  The written var is marked :sci/rebound: its root no longer comes from the
+  definition that last set its metadata (a def resets metadata, clearing it)."
   [ctx sci-var val]
   (let [owned (owned-var ctx sci-var)]
     (vars/bindRoot owned val)
+    (alter-meta! owned assoc :sci/rebound true)
     owned))
 
 (defn var? [x]
