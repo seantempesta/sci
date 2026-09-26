@@ -2292,7 +2292,7 @@
                           (sci/merge-opts (sci/init {}) {:my/environment 1}))))
   (testing "supported options still init"
     (is (= 3 (sci/eval-string* (sci/init {:namespaces {}
-                                          :call-preparation-hook nil})
+                                          :built-in-call-observer nil})
                                "(+ 1 2)")))))
 
 ;;;; Scratch
