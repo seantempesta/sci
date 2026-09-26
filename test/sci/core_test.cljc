@@ -1531,6 +1531,24 @@
            "a metadata write after a root write keeps the new root")
        (is (= [:parent "Parent."] [(parent-var) (:doc (meta parent-var))])))))
 
+(deftest vars-born-in-a-fork-are-owned-by-it-test
+  (let [parent (sci/init {})
+        _ (sci/eval-string* parent "(defn parent-letfn [] (letfn [(a [] (b)) (b [] :parent-letfn)] (a)))")
+        forked (sci/fork parent)
+        grandchild (sci/fork forked)]
+    (doseq [ctx [forked grandchild]]
+      (is (= :done (sci/eval-string* ctx "(letfn [(f [x] (if (pos? x) (g (dec x)) :done)) (g [x] (f x))] (f 3))"))
+          "letfn's anonymous vars are the fork's own")
+      (is (= 2 (sci/eval-string* ctx "(with-local-vars [x 1] (var-set x 2) @x)")))
+      (is (= :parent-letfn (sci/eval-string* ctx "(parent-letfn)"))
+          "an inherited fn creates its letfn vars in the calling fork"))
+    (is (= 1 (sci/eval-string* forked "(defprotocol P (m [_])) (defrecord R [a] P (m [_] a)) (m (->R 1))"))
+        "a var predeclared at analysis is the one its definition binds")
+    (is (= (:sci/generation @(:env forked))
+           (:sci/generation (meta (sci/resolve forked 'P)))))
+    (is (= 7 (sci/eval-string* forked "(declare q) (defn r [] (q)) (defn q [] 7) (r)")))
+    (is (nil? (sci/resolve parent 'P)) "the parent never sees the fork's vars")))
+
 #?(:clj
    (deftest root-writes-mark-a-var-rebound-until-it-is-redefined-test
      (let [ctx (sci/init {})]

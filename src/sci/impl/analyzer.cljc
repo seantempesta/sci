@@ -823,9 +823,12 @@
                            the-current-ns
                            (assoc the-current-ns name
                                   (doto (lang/->Var nil name
-                                                    {:name name
-                                                     :ns @utils/current-ns
-                                                     :file @utils/current-file}
+                                                    ;; born in this ctx: its generation owns it
+                                                    (utils/generation-meta
+                                                     @env
+                                                     {:name name
+                                                      :ns @utils/current-ns
+                                                      :file @utils/current-file})
                                                     false
                                                     false
                                                     nil

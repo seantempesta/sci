@@ -813,6 +813,13 @@
               (take-nth 2 (next bindings)))
      (fn [] ~@body)))
 
+(defn- new-local-var
+  "An anonymous var (letfn, with-local-vars) born in the current ctx, stamped
+  with its generation so the ctx owns it from birth."
+  [m]
+  (utils/new-var (gensym) nil
+                 (utils/generation-meta @(:env (store/get-ctx)) m)))
+
 (defn sci-alter-var-root
   ([v f]
    (let [ctx (store/get-ctx)]
@@ -1705,9 +1712,9 @@
      ;; private
      'has-root-impl (copy-var has-root-impl clojure-core-ns)
      ;; used in with-local-vars
-     '-new-dynamic-var (new-var '-new-dynamic-var #(sci.impl.utils/new-var (gensym) nil {:dynamic true}))
+     '-new-dynamic-var (new-var '-new-dynamic-var #(new-local-var {:dynamic true}))
      ;; used in let-fn
-     '-new-var (new-var '-new-var #(sci.impl.utils/new-var (gensym) nil))
+     '-new-var (new-var '-new-var #(new-local-var nil))
      '-add-loaded-lib (copy-var -add-loaded-lib clojure-core-ns)
      ;; end private
      '.. (macrofy '.. double-dot)

@@ -356,8 +356,12 @@
 (defn next-generation []
   (gensym "sci-generation-"))
 
-(defn generation-meta [env m]
-  (assoc m :sci/generation (:sci/generation env)))
+(defn generation-meta
+  "m stamped with env's generation; an unforked env has none, so no key."
+  [env m]
+  (if-let [generation (:sci/generation env)]
+    (assoc m :sci/generation generation)
+    m))
 
 (declare var?)
 
