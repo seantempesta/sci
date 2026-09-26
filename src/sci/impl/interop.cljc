@@ -198,11 +198,11 @@
                            ;; finding a nil v means the object was unmapped
                            (when v
                              (or (get class->opts v)
-                                 #?(:clj (when (identical? :all (:allow class->opts))
+                                 #?(:clj (when (:allow class->opts)
                                            (host-class-opts env v)))))
                            (let [v (get-in env [:imports sym])]
                              (or (some->> v (get class->opts))
-                                 #?(:clj (when (identical? :all (:allow class->opts))
+                                 #?(:clj (when (:allow class->opts)
                                            (host-class-opts env (or v sym)))))))))]
     class-opts))
 
