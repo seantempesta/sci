@@ -163,6 +163,25 @@
     (and (not override) (closed? class-opts section)) :deny
     :else :reflect))
 
+#?(:clj
+   (defn- host-class-opts
+     "Under `{:classes {:allow :all}}`, a class name no configuration names
+  resolves as Clojure's compiler resolves it: a `java.lang` short name through
+  `RT/DEFAULT_IMPORTS`, a dotted name through the base class loader. A record
+  or protocol the interpreter defines under the same name wins, as it does in
+  `resolve-record-or-protocol-class`."
+     [env sym]
+     (let [s (str sym)
+           dot (.lastIndexOf s ".")
+           package (if (neg? dot) (utils/current-ns-name) (symbol (subs s 0 dot)))]
+       (when-not (get-in env [:namespaces package (symbol (subs s (inc dot)))])
+         (when-let [c (if (neg? dot)
+                        (get clojure.lang.RT/DEFAULT_IMPORTS sym)
+                        (try (Class/forName s false (clojure.lang.RT/baseLoader))
+                             (catch ClassNotFoundException _ nil)
+                             (catch LinkageError _ nil)))]
+           {:class c})))))
+
 (defn resolve-class-opts [ctx sym]
   ;; note, we can't re-use fully-qualify class in this function, although it's
   ;; almost the same, since `js/Foo` stays fully qualified
@@ -177,9 +196,14 @@
                              imports (get-in env [:namespaces cnn :imports])]
                          (if-let [[_ v] (find imports sym)]
                            ;; finding a nil v means the object was unmapped
-                           (get class->opts v)
-                           (when-let [v (get-in env [:imports sym])]
-                             (get class->opts v)))))]
+                           (when v
+                             (or (get class->opts v)
+                                 #?(:clj (when (identical? :all (:allow class->opts))
+                                           (host-class-opts env v)))))
+                           (let [v (get-in env [:imports sym])]
+                             (or (some->> v (get class->opts))
+                                 #?(:clj (when (identical? :all (:allow class->opts))
+                                           (host-class-opts env (or v sym)))))))))]
     class-opts))
 
 (defn resolve-class [ctx sym]
