@@ -34,13 +34,18 @@
       (if (seq? form)
         (if (= 'do (first form))
           (ana/with-top-level-loc true (meta form)
-            (loop [exprs (rest form)
-                   ret nil]
-              (if (seq exprs)
-                (recur
-                 (rest exprs)
-                 (eval-form* ctx (first exprs)))
-                ret)))
+            (#?(:clj (fn [f] (if-some [call (:sci.impl/expansion-call (meta form))]
+                               (binding [utils/*expansion-call* call] (f))
+                               (f)))
+                :default (fn [f] (f)))
+             (fn []
+               (loop [exprs (rest form)
+                      ret nil]
+                 (if (seq exprs)
+                   (recur
+                    (rest exprs)
+                    (eval-form* ctx (first exprs)))
+                   ret)))))
           (let [;; take care of invocation array for let
                 upper-sym (gensym)
                 cb (volatile! {upper-sym {0 {:syms {}}}})

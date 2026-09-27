@@ -585,6 +585,8 @@
                                   ;; nil marks the imported class as unmapped
                                   (update the-ns-map :imports assoc sym nil)
                                   :else the-ns-map)))))))
+  #?(:clj (when-some [observe sci.lang/*write-observer*]
+            (observe {:op :unmap :ns (sci-ns-name* (store/get-ctx) sci-ns) :sym sym})))
   nil)
 
 (defn sci-ns-unalias [sci-ns sym]
@@ -605,6 +607,8 @@
   (let [ctx (store/get-ctx)
         env (:env ctx)]
     (swap! env update :namespaces dissoc sym)
+    #?(:clj (when-some [observe sci.lang/*write-observer*]
+              (observe {:op :remove-ns :ns sym})))
     nil))
 
 (defn sci-intern
@@ -634,6 +638,8 @@
          (let [var-name (symbol (str ns-name) (str var-sym))
                new-var (sci.impl.utils/new-var var-name val var-meta)]
            (swap! env assoc-in [:namespaces ns-name var-sym] new-var)
+           #?(:clj (when-some [observe sci.lang/*write-observer*]
+                     (observe {:op :bind :var new-var :root val :origin nil :kind :root})))
            new-var)))))
 
 (defn sci-bound?
@@ -1028,6 +1034,7 @@
   {:obj (sci.lang/->Namespace 'sci.impl.protocols nil)
    :private true
    #?@(:cljs ['-extend-native! sci.impl.protocols/-extend-native!])
+   '-extend-satisfies! sci.impl.protocols/-extend-satisfies!
    'type->str sci.impl.protocols/type->str})
 
 ;;;; REPL vars

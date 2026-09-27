@@ -448,7 +448,7 @@
          :implements ~(with-meta interfaces {:record true
                                              :method-counts method-counts})
          ~@methods)
-       (defn ~constructor-fn-sym
+       (defn ~(with-meta constructor-fn-sym {:sci.impl/member-of (list 'quote factory-fn-sym)})
          (~fields
           (~constructor-fn-sym ~@fields nil nil))
          ([~@fields meta# ext#]

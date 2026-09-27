@@ -68,6 +68,20 @@
                  watches)))
   ref)
 
+#?(:clj (def ^:dynamic *write-observer*
+          "Execution-scoped observer of each completed root write and removal:
+          a fn of one event map, or nil. Called once per write, after the root
+          is set and before the Var's watches."
+          nil))
+#?(:clj (def ^:dynamic *def-origin*
+          "The executing def's source occurrence while it binds its root." nil))
+#?(:clj (def ^:dynamic *write-kind*
+          "The kind of the root write in progress: nil for a definition or
+          rebinding, :extend for a protocol extension's bookkeeping write." nil))
+#?(:clj (def ^:dynamic *expansion-observer*
+          "Execution-scoped observer of macro expansions: a fn of the call
+          form and its expansion, or nil." nil))
+
 (deftype ^{:doc "Representation of a SCI var, created e.g. with `(defn foo [])`
     The fields of this type are implementation detail and should not be accessed
     directly."}
@@ -98,6 +112,9 @@
     (let [old-root (.-root this)]
       (vars/with-writeable-var this meta
         (vars/bumping-set! root v))
+      #?(:clj (when-some [observe *write-observer*]
+                (observe {:op :bind :var this :root v :origin *def-origin*
+                          :kind (or *write-kind* :root)})))
       (notify-watches this watches old-root v))
     ;; this is the return value for alter-var-root which should be the only place calling bindRoot directly
     v)

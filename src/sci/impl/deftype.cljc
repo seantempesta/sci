@@ -433,7 +433,7 @@
                     ~rec-type ~protocol-name ~method-impls)])
                (let [protocol-var (:var protocol)
                      _ (when protocol-var
-                         (vars/alter-var-root protocol-var update :satisfies
+                         (#?(:clj (fn [v & args] (binding [sci.lang/*write-kind* :extend] (apply vars/alter-var-root v args))) :default vars/alter-var-root) protocol-var update :satisfies
                                               (fnil conj #{}) (str rec-type)))
                      protocol-ns (:ns protocol)
                      pns (cond protocol-ns (str (types/getName protocol-ns))
@@ -519,7 +519,7 @@
                                    resolved-impls)
                    _ (doseq [protocol protocols]
                        (when-let [protocol-var (:var protocol)]
-                         (vars/alter-var-root protocol-var update :satisfies
+                         (#?(:clj (fn [v & args] (binding [sci.lang/*write-kind* :extend] (apply vars/alter-var-root v args))) :default vars/alter-var-root) protocol-var update :satisfies
                                               (fnil conj #{}) (symbol (str rec-type)))))
                    deftype-fn-result (when (and (seq interfaces) deftype-fn)
                                       (deftype-fn {:interfaces interfaces}))
@@ -616,7 +616,7 @@
                                 ~rec-type ~protocol-name ~method-impls))])
                           (let [protocol-var (:var protocol)
                                 _ (when protocol-var
-                                    (vars/alter-var-root protocol-var update :satisfies
+                                    (#?(:clj (fn [v & args] (binding [sci.lang/*write-kind* :extend] (apply vars/alter-var-root v args))) :default vars/alter-var-root) protocol-var update :satisfies
                                                          (fnil conj #{}) (symbol (str rec-type))))
                                 protocol-ns (:ns protocol)
                                 pns (cond protocol-ns (str (types/getName protocol-ns))

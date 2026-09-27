@@ -14,6 +14,7 @@
    [sci.impl.multimethods :as mms]
    [sci.impl.types :as types]
    [sci.impl.utils :as utils]
+   [sci.impl.vars :as vars]
    #?(:cljd [sci.lang :as lang] :default [sci.lang])))
 
 #?(:cljs
@@ -107,11 +108,13 @@
                                                                 ~(list 'var fq-protocol-name) " found for: "
                                                                 (clojure.core/protocol-type-impl x#)))))))))]
                       `(do
-                         ~@impls
-                         (clojure.core/alter-var-root (var ~protocol-name)
-                                                    update :methods conj ~method-name))))
+                         ~@impls)))
                   signatures
                   )
+           ;; The protocol's methods are part of its one definition: a final
+           ;; def (not a later root write), so its origin is the declaration's.
+           (def ~(with-meta protocol-name {:doc docstring})
+             (update ~protocol-name :methods into [~@(map first signatures)]))
            ~(list 'quote protocol-name))]
     expansion))
 
@@ -142,6 +145,15 @@
         meths))
 
 ;; TODO: apply patches for default override for records
+(defn -extend-satisfies!
+  "Record that `type-str` satisfies the protocol held by `protocol-var`: an
+  extension's bookkeeping write, observed as :kind :extend."
+  [protocol-var type-str]
+  (let [ctx (store/get-ctx)]
+    (#?(:clj (fn [f] (binding [sci.lang/*write-kind* :extend] (f))) :default (fn [f] (f)))
+     #(utils/bind-root! ctx protocol-var
+                        (update (vars/getRawRoot protocol-var) :satisfies (fnil conj #{}) type-str)))))
+
 (defn extend [atype & proto+mmaps]
   (doseq [[proto mmap] (partition 2 proto+mmaps)]
     (if (native-protocol? proto)
@@ -277,9 +289,8 @@
                         `(sci.impl.protocols/-extend-native!
                           ~type ~protocol-name ~(native-method-impls meths))
                         `(do
-                           (clojure.core/alter-var-root
-                            (var ~protocol-name) update :satisfies (fnil conj #{})
-                            (type->str ~type))
+                           (sci.impl.protocols/-extend-satisfies!
+                            (var ~protocol-name) (type->str ~type))
                            ~@(process-methods ctx type meths pns extend-via-metadata)))))
                   impls))]
     expansion))
@@ -302,9 +313,8 @@
                         pns (str (types/getName protocol-ns))
                         extend-via-metadata (:extend-via-metadata proto-data)]
                     `(do
-                       (clojure.core/alter-var-root
-                        (var ~proto) update :satisfies (fnil conj #{})
-                        (type->str ~atype))
+                       (sci.impl.protocols/-extend-satisfies!
+                        (var ~proto) (type->str ~atype))
                        ~@(process-methods ctx atype meths pns extend-via-metadata))))))
             proto+meths))))
 

@@ -353,6 +353,13 @@
    (let [meta (assoc meta :name (unqualify-symbol name))]
      (lang/->Var init-val name meta false nil nil (:ns meta)))))
 
+#?(:clj (def ^:dynamic *expansion-call*
+          "The innermost macro call whose expansion is being analyzed: its
+          source span and operator, or nil." nil))
+#?(:clj (def ^:dynamic *expansion-root*
+          "The form that innermost macro call expanded to, which carries the
+          call's location though it was not read from source." nil))
+
 (defn next-generation []
   (gensym "sci-generation-"))
 

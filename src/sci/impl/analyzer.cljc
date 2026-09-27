@@ -872,9 +872,21 @@
               m (if m-needs-eval?
                   (analyze ctx m)
                   (->constant m))
-              file @utils/current-file]
+              file @utils/current-file
+              ;; The source occurrence this def runs as: the def form itself
+              ;; when the reader made it (an argument a macro passed through
+              ;; keeps its own location), else the innermost macro call whose
+              ;; expansion produced it.
+              origin #?(:clj (if (and expr-loc? (not (identical? expr utils/*expansion-root*)))
+                               {:line (:line expr-loc) :column (:column expr-loc)
+                                :end-line (:end-row expr-loc) :end-column (:end-col expr-loc)}
+                               (or utils/*expansion-call*
+                                   (let [loc utils/*top-level-location*]
+                                     {:line (:line loc) :column (:column loc)
+                                      :end-line (:end-row loc) :end-column (:end-col loc)})))
+                        :default nil)]
           (sci.impl.types/->Node
-           (eval/eval-def ctx bindings var-name init m file)
+           (eval/eval-def ctx bindings var-name init m file origin)
            nil))))))
 
 #_(defn analyze-defn [ctx [op fn-name & body :as expr]]
@@ -2098,12 +2110,25 @@
                                 v (if (seq? v)
                                     (with-meta v (merge m (meta v)))
                                     v)
+                                #?@(:clj [_ (when-some [observe sci.lang/*expansion-observer*]
+                                              (observe expr v))
+                                          call (if (:line m)
+                                                 {:line (:line m) :column (:column m)
+                                                  :end-line (:end-row m) :end-column (:end-col m)
+                                                  :expanded-by (first expr)}
+                                                 (some-> utils/*expansion-call* (assoc :expanded-by (first expr))))])
                                 expanded (cond (:sci.impl/macroexpanding ctx) v
                                                (and top-level? (seq? v) (= 'do (first v)))
                                                ;; hand back control to eval-form for
                                                ;; interleaved analysis and eval
-                                               (t/->EvalForm v)
-                                               :else (analyze ctx v top-level?))]
+                                               (t/->EvalForm #?(:clj (vary-meta v assoc :sci.impl/expansion-call call)
+                                                                :default v))
+                                               :else #?(:clj (binding [utils/*expansion-call* call
+                                                                       ;; the root took the call's location:
+                                                                       ;; it was not read from source
+                                                                       utils/*expansion-root* v]
+                                                               (analyze ctx v top-level?))
+                                                        :default (analyze ctx v top-level?)))]
                             expanded)
                           (let [rest-forms #?(:cljd (desugar-named-args (rest expr))
                                               :default (rest expr))]

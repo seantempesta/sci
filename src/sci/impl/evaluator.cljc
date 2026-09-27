@@ -23,7 +23,7 @@
      syntax-quote})
 
 (defn eval-def
-  [ctx bindings var-name init m file]
+  [ctx bindings var-name init m file origin]
   (let [init (types/eval init ctx bindings)
         m (types/eval m ctx bindings)
         m (assoc m :name var-name :file file)
@@ -44,15 +44,19 @@
                        (lang/->Var @prev var-name m false false nil (:ns m))
 
                        :else prev)
-                v (do (when-not (identical? utils/var-unbound init)
-                        (vars/bindRoot prev init))
-                      (utils/reset-meta!* prev m)
-                      prev)
-                the-current-ns (assoc the-current-ns var-name v)]
+                the-current-ns (assoc the-current-ns var-name prev)]
             (assoc-in env [:namespaces cnn] the-current-ns)))
-        env (swap! (:env ctx) assoc-in-env)]
+        ;; The swap only publishes the Var: it may retry, so the root write
+        ;; (observed once) happens after it, on the published Var.
+        env (swap! (:env ctx) assoc-in-env)
+        v (get (get (get env :namespaces) cnn) var-name)]
+    (utils/reset-meta!* v (utils/generation-meta env m))
+    (when-not (identical? utils/var-unbound init)
+      #?(:clj (binding [lang/*def-origin* origin]
+                (vars/bindRoot v init))
+         :default (vars/bindRoot v init)))
     ;; return var
-    (get (get (get env :namespaces) cnn) var-name)))
+    v))
 
 #?(:cljd
    (defmacro resolve-symbol [bindings sym]
