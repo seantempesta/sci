@@ -112,10 +112,16 @@
     (let [old-root (.-root this)]
       (vars/with-writeable-var this meta
         (vars/bumping-set! root v))
-      #?(:clj (when-some [observe *write-observer*]
-                (observe {:op :bind :var this :root v :origin *def-origin*
-                          :kind (or *write-kind* :root)})))
-      (notify-watches this watches old-root v))
+      ;; The write's own origin and kind go into its event; the producer tags
+      ;; are cleared around the observer and the watches, so a write they
+      ;; make (a watch's alter-var-root) carries no definition's origin.
+      #?(:clj (let [event {:op :bind :var this :root v :origin *def-origin*
+                           :kind (or *write-kind* :root)}]
+                (binding [*def-origin* nil *write-kind* nil]
+                  (when-some [observe *write-observer*]
+                    (observe event))
+                  (notify-watches this watches old-root v)))
+         :default (notify-watches this watches old-root v)))
     ;; this is the return value for alter-var-root which should be the only place calling bindRoot directly
     v)
   (getRawRoot [_this]

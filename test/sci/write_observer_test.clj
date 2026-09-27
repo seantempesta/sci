@@ -137,3 +137,15 @@
       (binding [sci.lang/*expansion-observer* (fn [call exp] (swap! seen conj [(first call) exp]))]
         (sci/eval-string "(defmacro single [] (list 'def 'made 7)) (single)"))
       (is (= '(def made 7) (some (fn [[op exp]] (when (= 'single op) exp)) @seen))))))
+
+(deftest a-watch-rebinding-carries-no-definition-origin
+  (testing "a watch's alter-var-root during a def's root write is a rebinding, with no origin"
+    (let [ctx (sci/init {})
+          seen (atom [])]
+      (sci/eval-string* ctx "(def watched 0) (add-watch #'watched :once (fn [_ v _ _] (remove-watch v :once) (alter-var-root v inc)))")
+      (binding [sci.lang/*write-observer* #(swap! seen conj (select-keys % [:root :origin]))]
+        (sci/eval-string* ctx "(def watched 2)"))
+      (is (= 3 (sci/eval-string* ctx "watched")))
+      (is (= [2 3] (mapv :root @seen)))
+      (is (some? (:origin (first @seen))))
+      (is (nil? (:origin (second @seen)))))))
