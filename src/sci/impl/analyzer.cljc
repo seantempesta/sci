@@ -878,12 +878,9 @@
               ;; keeps its own location), else the innermost macro call whose
               ;; expansion produced it.
               origin #?(:clj (if (and expr-loc? (not (identical? expr utils/*expansion-root*)))
-                               {:line (:line expr-loc) :column (:column expr-loc)
-                                :end-line (:end-row expr-loc) :end-column (:end-col expr-loc)}
+                               (utils/source-origin expr-loc)
                                (or utils/*expansion-call*
-                                   (let [loc utils/*top-level-location*]
-                                     {:line (:line loc) :column (:column loc)
-                                      :end-line (:end-row loc) :end-column (:end-col loc)})))
+                                   (utils/source-origin utils/*top-level-location*)))
                         :default nil)]
           (sci.impl.types/->Node
            (eval/eval-def ctx bindings var-name init m file origin)
@@ -2113,9 +2110,7 @@
                                 #?@(:clj [_ (when-some [observe sci.lang/*expansion-observer*]
                                               (observe expr v))
                                           call (if (:line m)
-                                                 {:line (:line m) :column (:column m)
-                                                  :end-line (:end-row m) :end-column (:end-col m)
-                                                  :expanded-by (first expr)}
+                                                 (assoc (utils/source-origin m) :expanded-by (first expr))
                                                  (some-> utils/*expansion-call* (assoc :expanded-by (first expr))))])
                                 expanded (cond (:sci.impl/macroexpanding ctx) v
                                                (and top-level? (seq? v) (= 'do (first v)))

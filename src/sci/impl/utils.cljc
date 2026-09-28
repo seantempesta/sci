@@ -353,6 +353,15 @@
    (let [meta (assoc meta :name (unqualify-symbol name))]
      (lang/->Var init-val name meta false nil nil (:ns meta)))))
 
+#?(:clj (defn source-origin
+          "A reader location as an origin: :line and :column, and :end-line
+          and :end-column only when the reader recorded them (a key is absent,
+          never nil)."
+          [loc]
+          (cond-> {:line (:line loc) :column (:column loc)}
+            (:end-row loc) (assoc :end-line (:end-row loc))
+            (:end-col loc) (assoc :end-column (:end-col loc)))))
+
 #?(:clj (def ^:dynamic *expansion-call*
           "The innermost macro call whose expansion is being analyzed: its
           source span and operator, or nil." nil))
