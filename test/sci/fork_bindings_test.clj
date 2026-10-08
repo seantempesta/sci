@@ -159,3 +159,50 @@
         h (ev child "h")]
     (is (= :child (store/with-ctx child (h))))
     (is (= :base (h)) "with no context, the Var's own binding")))
+
+(defn- host-ctx
+  "A context whose host namespace runs an SCI fn on a raw Thread, an executor
+  and a binding-conveying future."
+  []
+  (let [on-thread (fn [f] (let [p (promise)]
+                            (.start (Thread. ^Runnable (fn [] (deliver p (f)))))
+                            (deref p 2000 :timeout)))]
+    (sci/init {:namespaces
+               {'host {'thread on-thread
+                       'pool (fn [f] (.get (.submit (java.util.concurrent.ForkJoinPool/commonPool)
+                                                    ^Callable f)))
+                       'future (fn [f] (deref (future-call f) 2000 :timeout))}}})))
+
+(deftest a-context-less-thread-runs-an-sci-fn-under-its-defining-context
+  ;; A host thread SCI did not enter has no *ctx*; Clojure's Var roots are
+  ;; global, so a call there must read the current definitions, not each
+  ;; Var's first binding.
+  (let [base (host-ctx)
+        _ (ev base "(def holder 1) (defn priv [] :first) (defn calls-priv [] [holder (priv)])")
+        fork (sci/fork base)
+        _ (ev fork "(def holder 2) (defn priv [] :second)")
+        grandchild (sci/fork fork)
+        _ (ev grandchild "(defn priv [] :third)")]
+    (testing "raw Thread, executor and future from a fork see the fork"
+      (is (= [[2 :second] [2 :second] [2 :second]]
+             (ev fork "[(host/thread (fn [] [holder (priv)]))
+                        (host/pool (fn [] [holder (priv)]))
+                        (host/future (fn [] [holder (priv)]))]"))))
+    (testing "an inherited caller nested in a fork's fn sees the fork on any thread"
+      (is (= [[2 :second] [2 :third]]
+             [(ev fork "(host/thread (fn [] (calls-priv)))")
+              (ev grandchild "(host/pool (fn [] (calls-priv)))")])))
+    (testing "host Var operations and writes on a context-less thread"
+      (is (= [:second 2] (ev fork "(host/thread (fn [] [(#'priv) @#'holder]))")))
+      (is (= 3 (ev fork "(host/thread (fn [] (alter-var-root #'holder inc) holder))")))
+      (is (= 3 (ev fork "holder"))))
+    (testing "the base still sees its own"
+      (is (= [[1 :first] [1 :first] 1]
+             [(ev base "(host/thread (fn [] [holder (priv)]))")
+              (ev base "(host/pool calls-priv)")
+              (ev base "holder")])))
+    (testing "an fn the host holds is called with no context at all"
+      (let [g (ev fork "(fn [] [holder (priv)])")]
+        (is (= [3 :second] (g)))))
+    (testing "a base fn passed by value runs under the base (its defining context)"
+      (is (= [1 :first] (ev fork "(host/thread calls-priv)"))))))
