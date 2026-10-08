@@ -88,6 +88,26 @@
 (ns foo (:use clojure.string))
 (declare split)"))))
 
+(deftest alias-retarget-test
+  (let [msg #"Alias m already exists in namespace user, aliasing clojure.string"]
+    (testing "alias to a different namespace refuses, as Clojure does"
+      (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) msg
+                            (eval* "(alias 'm 'clojure.string) (alias 'm 'clojure.set)"))))
+    (testing "require :as refuses a retarget"
+      (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) msg
+                            (eval* "(require '[clojure.string :as m]) (require '[clojure.set :as m])"))))
+    (testing ":as-alias refuses a retarget"
+      (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) msg
+                            (eval* "(alias 'm 'clojure.string) (require '[clojure.set :as-alias m])")))))
+  #?(:clj (testing "the cause is Clojure's IllegalStateException"
+            (is (instance? IllegalStateException
+                           (try (eval* "(alias 'm 'clojure.string) (alias 'm 'clojure.set)")
+                                (catch Exception e (ex-cause e)))))))
+  (testing "the same target is allowed and answers nil"
+    (is (nil? (eval* "(alias 'm 'clojure.string) (alias 'm 'clojure.string)"))))
+  (testing "ns-unalias then alias retargets"
+    (is (= 'clojure.set (eval* "(alias 'm 'clojure.string) (ns-unalias *ns* 'm) (alias 'm 'clojure.set) (ns-name (get (ns-aliases *ns*) 'm))")))))
+
 (deftest misc-namespace-test
   (is (= 1 (eval* "(alias (symbol \"c\") (symbol \"clojure.core\")) (c/and true 1)")))
   (is (= #{1 3 2} (eval* "(mapv alias ['set1 'set2] ['clojure.set 'clojure.set]) (set2/difference
@@ -109,7 +129,7 @@
   (is (= :user/foo (eval* "::foo")))
   (is (= :bar/foo (eval* "(in-ns 'bar) ::foo")))
   (is (= :clojure.string/foo (eval* "::str/foo")))
-  (is (= :clojure.set/foo (eval* "(require '[clojure.set :as str]) ::str/foo")))
+  (is (= :clojure.set/foo (eval* "(ns-unalias *ns* 'str) (require '[clojure.set :as str]) ::str/foo")))
   (is (= :clojure.string/foo (eval* "(in-ns 'foo) (require '[clojure.string :as str]) ::str/foo")))
   (is (= :clojure.string/foo (eval* "(ns foo (:require [clojure.string :as s])) ::s/foo"))))
 

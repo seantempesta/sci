@@ -340,6 +340,16 @@
                {:ns clojure-core-ns
                 :doc "A sci.lang.Namespace object representing the current namespace."}))
 
+(defn check-alias-retarget!
+  "Throws, as Clojure does, when `current-ns` already maps `alias-sym` to a different namespace."
+  [env current-ns alias-sym ns-sym]
+  (let [existing (get-in env [:namespaces current-ns :aliases alias-sym])]
+    (when (and existing (not= existing ns-sym))
+      (let [msg (str "Alias " alias-sym " already exists in namespace " current-ns ", aliasing " existing)]
+        (throw #?(:clj (IllegalStateException. msg)
+                  :cljs (js/Error. msg)
+                  :cljd (StateError msg)))))))
+
 (defn current-ns-name []
   (let [curr-ns @current-ns]
     (if (symbol? curr-ns) curr-ns (t/getName curr-ns))))

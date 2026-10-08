@@ -107,8 +107,10 @@
                           the-current-ns
                           (update the-current-ns :required-namespaces
                                   (fnil conj #{}) lib-name))
-         the-current-ns (if as (assoc-in the-current-ns [:aliases as] lib-name)
-                            the-current-ns)
+         the-current-ns (if as
+                          (do (utils/check-alias-retarget! env current-ns as lib-name)
+                              (assoc-in the-current-ns [:aliases as] lib-name))
+                          the-current-ns)
          rename-sym (if rename (fn [sym] (or (rename sym) sym))
                         identity)
          include-sym? (if exclude

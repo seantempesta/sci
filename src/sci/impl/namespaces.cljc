@@ -482,6 +482,7 @@
     (swap! (:env ctx)
            (fn [env]
              (let [current-ns (sci.impl.utils/current-ns-name)]
+               (sci.impl.utils/check-alias-retarget! env current-ns alias-sym ns-sym)
                (assoc-in env [:namespaces current-ns :aliases alias-sym] ns-sym)))))
   nil)
 
