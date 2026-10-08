@@ -98,6 +98,9 @@
 
 (defprotocol IVar
   (bindRoot [this v])
+  (rootIn [this ctx]
+    "The root in the executing context's binding, or in ctx's when no
+    context is active (a host thread SCI did not enter).")
   (getRawRoot [this])
   (toSymbol [this])
   (isMacro [this])
@@ -119,6 +122,11 @@
   (when-some [m (get @(:env ctx) :sci/var-bindings)]
     #?(:clj (.get ^java.util.Map m sci-var)
        :default (get m sci-var))))
+
+(defn deref-in
+  "sci-var's value as an analyzed read in ctx sees it."
+  [sci-var ctx]
+  (rootIn sci-var ctx))
 
 (defn active-binding
   "The executing context's own binding of sci-var, or nil."

@@ -154,6 +154,13 @@
     (if contextual
       (if-some [b (vars/active-binding this)] (.-root ^sci.impl.vars.Binding b) root)
       root))
+  (rootIn [this ctx]
+    (if thread-bound
+      (clojure.core/deref this)
+      (if contextual
+        (if-some [b (vars/context-binding (or sci.ctx-store/*ctx* ctx) this)]
+          (.-root ^sci.impl.vars.Binding b) root)
+        root)))
   (fieldBinding [_this]
     (vars/->Binding root meta watches))
   (setContextual [_this]

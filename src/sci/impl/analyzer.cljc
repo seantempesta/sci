@@ -2165,7 +2165,9 @@
                                                           f children stack
                                                           #?(:cljd nil
                                                              :cljs (when (utils/var? f) (fn [_ _ v]
-                                                                                          (deref v))) :clj nil))]
+                                                                                          (deref v)))
+                                                             :clj (when (utils/var? f)
+                                                                    (fn [ctx _ v] (vars/deref-in v ctx)))))]
                                     #?(:cljs (cond (utils/var? f)
                                                    (t/attach-ast node [:call-var f children stack])
                                                    (fn? f)
@@ -2360,7 +2362,8 @@
                                             :cljs (new js/Error
                                                        (str "Can't take value of a macro: " v ""))))
                                   (sci.impl.types/->Node
-                                   (faster/deref-1 v)
+                                   #?(:clj (vars/deref-in v ctx)
+                                      :default (faster/deref-1 v))
                                    nil
                                    ;; value-position var read: emitted as a
                                    ;; plain deref, never cached (see the
