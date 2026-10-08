@@ -38,10 +38,6 @@
                        (let [m (meta prev)]
                          (lang/->Var prev var-name m false false nil (:ns m)))
 
-                       (and (not (vars/built-in-var? (meta prev)))
-                            (not= (:sci/generation (meta prev))
-                                  (:sci/generation env)))
-                       (lang/->Var @prev var-name m false false nil (:ns m))
 
                        :else prev)
                 the-current-ns (assoc the-current-ns var-name prev)]
@@ -50,13 +46,18 @@
         ;; (observed once) happens after it, on the published Var.
         env (swap! (:env ctx) assoc-in-env)
         v (get (get (get env :namespaces) cnn) var-name)]
-    (utils/reset-meta!* v (utils/generation-meta env m))
+    (let [inherited? (and (not (vars/built-in-var? (meta v)))
+                         (not= (:sci/generation (meta v)) (:sci/generation env)))]
+    (when-not inherited? (utils/reset-meta!* v (utils/generation-meta env m)))
     (when-not (identical? utils/var-unbound init)
       #?(:clj (binding [lang/*def-origin* origin]
-                (vars/bindRoot v init))
+                (if inherited?
+                  (do (swap! (:env ctx) update :sci/var-roots (fnil assoc {}) v (if (nil? init) vars/unset init))
+                      (vars/setContextual v))
+                  (vars/bindRoot v init)))
          :default (vars/bindRoot v init)))
     ;; return var
-    v))
+    v)))
 
 #?(:cljd
    (defmacro resolve-symbol [bindings sym]

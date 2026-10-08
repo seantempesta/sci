@@ -136,6 +136,8 @@
     (or (:macro meta)
         (when-some [m (clojure.core/meta root)]
           (:sci/macro m))))
+  (setContextual [this]
+    (set! needs-ctx true))
   (setThreadBound [this v]
     #?(:cljd (set! thread-bound v)
        :default (set! (.-thread-bound this) v)))
@@ -176,7 +178,7 @@
       (if-let [tbox (vars/get-thread-binding this)]
         (types/getVal tbox)
         root)
-      root))
+      (if needs-ctx (vars/contextual-root this root) root)))
   Object
   (toString [this]
     (str "#'" (vars/toSymbol this)))

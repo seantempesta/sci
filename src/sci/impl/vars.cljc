@@ -103,7 +103,16 @@
   (isMacro [this])
   (hasRoot [this])
   (setThreadBound [this v])
+  (setContextual [this])
   (unbind [this]))
+
+(def unset (Object.))
+
+(defn contextual-root [v root]
+  (if-some [ctx sci.ctx-store/*ctx*]
+    (let [r (.get ^java.util.Map (get @(:env ctx) :sci/var-roots {}) v)]
+      (if (nil? r) root (if (identical? unset r) nil r)))
+    root))
 
 (defprotocol DynVar
   (dynamic? [this]))
