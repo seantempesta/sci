@@ -342,8 +342,14 @@
                 :doc "A sci.lang.Namespace object representing the current namespace."}))
 
 (defn check-alias-retarget!
-  "Throws, as Clojure does, when `current-ns` already maps `alias-sym` to a different namespace."
+  "Throws, as Clojure does, when `alias-sym` is not a symbol (`:as 'u` reads as the list `(quote u)`) or
+  when `current-ns` already maps it to a different namespace."
   [env current-ns alias-sym ns-sym]
+  (when-not (simple-symbol? alias-sym)
+    (let [msg (str "Alias must be a simple symbol, got: " (pr-str alias-sym))]
+      (throw #?(:clj (IllegalArgumentException. msg)
+                :cljs (js/Error. msg)
+                :cljd (ArgumentError msg)))))
   (let [existing (get-in env [:namespaces current-ns :aliases alias-sym])]
     (when (and existing (not= existing ns-sym))
       (let [msg (str "Alias " alias-sym " already exists in namespace " current-ns ", aliasing " existing)]
