@@ -43,26 +43,76 @@
 
 ;;; Producers - lazy sequences that fire interrupt-fn on each step
 
-(defn- range-seq [start end step ifn]
-  (let [pred (cond
-               (nil? end)   (constantly true)
-               (pos? step)  #(< % end)
-               (neg? step)  #(> % end)
-               :else        (constantly false))]
-    (letfn [(gen [i]
-              (lazy-seq
-                (when (pred i)
-                  (ifn)
-                  (cons i (gen (+ i step))))))]
-      (gen start))))
+(defn- range-seq
+  "Wraps the core range `s` so `ifn` fires once per chunk (once per element for
+  an unchunked seq). Chunks come from core `range`, so element production costs
+  what core costs, and `count`/`reduce` walk whole chunks."
+  [s ifn]
+  (lazy-seq
+    (when-let [s (seq s)]
+      (ifn)
+      (if (chunked-seq? s)
+        (chunk-cons (chunk-first s) (range-seq (chunk-rest s) ifn))
+        (cons (first s) (range-seq (rest s) ifn))))))
+
+;; A finite long range keeps core `LongRange`'s O(1) `count` and chunked
+;; `reduce`: this seq delegates to one and fires `ifn` per chunk.
+#?(:clj
+   (declare ->CheckedRange))
+
+#?(:clj
+   (defn- reduce-chunks [^clojure.lang.LongRange r ^clojure.lang.IFn ifn ^clojure.lang.IFn f init]
+     (loop [s r acc init]
+       (ifn)
+       (let [acc (.reduce (.chunkedFirst s) f acc)]
+         (if (reduced? acc)
+           @acc
+           (if-let [n (.chunkedNext s)] (recur n acc) acc))))))
+
+#?(:clj
+   (deftype CheckedRange [^clojure.lang.LongRange r ^clojure.lang.IFn ifn]
+     clojure.lang.Sequential
+     clojure.lang.ISeq
+     (first [_] (.first r))
+     (next [_] (when-let [n (.next r)] (ifn) (CheckedRange. n ifn)))
+     (more [this] (or (.next this) ()))
+     (cons [_ o] (.cons r o))
+     clojure.lang.Counted
+     (count [_] (.count r))
+     clojure.lang.IPersistentCollection
+     (empty [_] ())
+     (equiv [_ o] (.equiv r (if (instance? CheckedRange o) (.-r ^CheckedRange o) o)))
+     clojure.lang.Seqable
+     (seq [this] this)
+     clojure.lang.IChunkedSeq
+     (chunkedFirst [_] (ifn) (.chunkedFirst r))
+     (chunkedNext [_] (when-let [n (.chunkedNext r)] (CheckedRange. n ifn)))
+     (chunkedMore [this] (or (.chunkedNext this) ()))
+     clojure.lang.IReduceInit
+     (reduce [_ f init] (reduce-chunks r ifn f init))
+     clojure.lang.IReduce
+     (reduce [_ f]
+       (let [a (.first r)]
+         (if-let [n (.next r)] (reduce-chunks n ifn f a) a)))
+     clojure.lang.IHashEq
+     (hasheq [_] (.hasheq r))
+     Iterable
+     (iterator [this] (clojure.lang.SeqIterator. (range-seq r ifn)))))
+
+(defn- checked-range? [coll]
+  #?(:clj (instance? CheckedRange coll) :cljs false))
+
+(defn- checked-range [s ifn]
+  #?(:clj (if (instance? clojure.lang.LongRange s) (CheckedRange. s ifn) (range-seq s ifn))
+     :cljs (range-seq s ifn)))
 
 (defn- sci-range
-  ([]    (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (range-seq 0 nil 1 ifn) (range))))
-  ([end] (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (range-seq 0 end 1 ifn) (range end))))
+  ([]    (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (range-seq (range) ifn) (range))))
+  ([end] (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (checked-range (range end) ifn) (range end))))
   ([start end]
-   (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (range-seq start end 1 ifn) (range start end))))
+   (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (checked-range (range start end) ifn) (range start end))))
   ([start end step]
-   (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (range-seq start end step ifn) (range start end step)))))
+   (let [ifn (get-interrupt-fn (store/get-ctx))] (if ifn (checked-range (range start end step) ifn) (range start end step)))))
 
 (defn- sci-repeat
   ([x]
@@ -252,9 +302,11 @@
   ([to] (into to))
   ([to from]
    (let [ifn (get-interrupt-fn (store/get-ctx))]
-     (if-not ifn
-       (into to from)
-       (reduce (fn [acc x] (ifn) (conj acc x)) to from))))
+     (cond
+       (or (not ifn) (checked-range? from)) (into to from)
+       #?@(:clj [(instance? clojure.lang.IEditableCollection to)
+                 (with-meta (persistent! (reduce (fn [acc x] (ifn) (conj! acc x)) (transient to) (seq from))) (meta to))])
+       :else (reduce (fn [acc x] (ifn) (conj acc x)) to from))))
   ([to xf from]
    (let [ifn (get-interrupt-fn (store/get-ctx))]
      (if-not ifn
@@ -267,6 +319,8 @@
          s   (seq coll)]
      (if-not ifn
        (reduce f coll)
+       (if (checked-range? coll)
+         (reduce f coll)
        (if s
          (loop [v (first s) s (next s)]
            (if s
@@ -274,17 +328,19 @@
                  (let [ret (f v (first s))]
                    (if (reduced? ret) @ret (recur ret (next s)))))
              v))
-         (f)))))
+         (f))))))
   ([f init coll]
    (let [ifn (get-interrupt-fn (store/get-ctx))]
      (if-not ifn
        (reduce f init coll)
+       (if (checked-range? coll)
+         (reduce f init coll)
        (loop [v init s (seq coll)]
          (if s
            (do (ifn)
                (let [ret (f v (first s))]
                  (if (reduced? ret) @ret (recur ret (next s)))))
-           v))))))
+           v)))))))
 
 (def clojure-core
   "Map of `clojure.core` symbol -> interrupt-fn aware replacement var. Each value
