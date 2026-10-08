@@ -23,21 +23,26 @@
                         ~@body))))
 
 ;; A host thread that SCI did not enter (a raw Thread, an executor, a callback)
-;; has no sci.ctx-store/*ctx*, so the Var reads and writes of an SCI fn called
-;; there would select no context's binding and answer each Var's field binding,
+;; has no sci.ctx-store/*ctx* of its own: it reads nil, or the root a library
+;; stored with sci.ctx-store/reset-ctx! (clj-kondo's hooks namespace does so
+;; when loaded). The Var reads and writes of an SCI fn called there would
+;; select that context's binding, or none, and answer each Var's field binding,
 ;; which only the Var's creating context writes. Such a call re-enters the fn
-;; under the context it was defined in. With a context active, the fn runs
-;; under it: an inherited fn called in a fork sees the fork's definitions.
-;; The check is one *ctx* deref per call; the binding happens only on entry
-;; from a context-less thread, so nested calls never bind again.
+;; under the context it was defined in. With a context bound on the thread, the
+;; fn runs under it: an inherited fn called in a fork sees the fork's
+;; definitions. The check is one *ctx* deref and one root read per call; the
+;; binding happens only on entry from a context-less thread, so nested calls
+;; never bind again.
 #?(:cljd
    (defmacro in-defining-ctx [_self-call body]
      body)
    :default
    (defmacro in-defining-ctx [self-call body]
-     (macros/? :clj `(if (nil? sci.ctx-store/*ctx*)
-                       (binding [sci.ctx-store/*ctx* ~'ctx] ~self-call)
-                       ~body)
+     (macros/? :clj `(let [active# sci.ctx-store/*ctx*]
+                       (if (or (nil? active#)
+                               (identical? active# (.getRawRoot (var sci.ctx-store/*ctx*))))
+                         (binding [sci.ctx-store/*ctx* ~'ctx] ~self-call)
+                         ~body))
                :cljs body)))
 
 ;; The interrupt-fn check in the generated fns below uses

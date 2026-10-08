@@ -205,4 +205,14 @@
       (let [g (ev fork "(fn [] [holder (priv)])")]
         (is (= [3 :second] (g)))))
     (testing "a base fn passed by value runs under the base (its defining context)"
-      (is (= [1 :first] (ev fork "(host/thread calls-priv)"))))))
+      (is (= [1 :first] (ev fork "(host/thread calls-priv)"))))
+    (testing "a context a library stored as the root (reset-ctx!) is no thread's own context"
+      ;; clj-kondo's hooks namespace stores its context with reset-ctx! when
+      ;; loaded, so every thread SCI did not enter reads it as *ctx*
+      (let [stored (.getRawRoot #'store/*ctx*)]
+        (try
+          (store/reset-ctx! (sci/init {}))
+          (is (= [[3 :second] [3 :second]]
+                 (ev fork "[(host/thread (fn [] [holder (priv)]))
+                            (host/pool (fn [] [holder (priv)]))]")))
+          (finally (alter-var-root #'store/*ctx* (constantly stored))))))))
