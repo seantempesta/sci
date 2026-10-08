@@ -82,6 +82,29 @@
           "Execution-scoped observer of macro expansions: a fn of the call
           form and its expansion, or nil." nil))
 
+(defn- root-written!
+  "Reports one completed root write of v from old-root to new-root: the
+  write observer, then the watches in effect for the writing context."
+  [v watches old-root new-root]
+  ;; The write's own origin and kind go into its event; the producer tags
+  ;; are cleared around the observer and the watches, so a write they
+  ;; make (a watch's alter-var-root) carries no definition's origin.
+  #?(:clj (let [event {:op :bind :var v :root new-root :origin *def-origin*
+                       :kind (or *write-kind* :root)}]
+            (binding [*def-origin* nil *write-kind* nil]
+              (when-some [observe *write-observer*]
+                (observe event))
+              (notify-watches v watches old-root new-root)))
+     :default (notify-watches v watches old-root new-root)))
+
+(defn- with-field-generation
+  "m keeping the Var's own :sci/generation: a context's binding never
+  changes which generation owns the Var."
+  [^sci.impl.vars.Binding field m]
+  (if-some [g (:sci/generation (.-meta field))]
+    (assoc m :sci/generation g)
+    (dissoc m :sci/generation)))
+
 (deftype ^{:doc "Representation of a SCI var, created e.g. with `(defn foo [])`
     The fields of this type are implementation detail and should not be accessed
     directly."}
@@ -95,9 +118,9 @@
          #?(:cljd ^:mutable thread-bound
             :clj ^:volatile-mutable thread-bound
             :cljs ^:mutable thread-bound)
-         #?(:cljd ^:mutable needs-ctx
-            :clj ^:volatile-mutable needs-ctx
-            :cljs ^:mutable needs-ctx)
+         #?(:cljd ^:mutable contextual
+            :clj ^:volatile-mutable contextual
+            :cljs ^:mutable contextual)
          #?(:cljd ^:mutable watches
             :clj ^:volatile-mutable watches
             :cljs ^:mutable watches)
@@ -108,47 +131,62 @@
   (getName [_this]
     (or (:name meta) sym))
   vars/IVar
+  ;; A root write in a context that owns this Var (or with no context)
+  ;; sets the field; any other context writes its own binding, so code
+  ;; analyzed anywhere keeps this one Var and reads the executing
+  ;; context's root.
   (bindRoot [this v]
-    (let [old-root (.-root this)]
-      (vars/with-writeable-var this meta
-        (vars/bumping-set! root v))
-      ;; The write's own origin and kind go into its event; the producer tags
-      ;; are cleared around the observer and the watches, so a write they
-      ;; make (a watch's alter-var-root) carries no definition's origin.
-      #?(:clj (let [event {:op :bind :var this :root v :origin *def-origin*
-                           :kind (or *write-kind* :root)}]
-                (binding [*def-origin* nil *write-kind* nil]
-                  (when-some [observe *write-observer*]
-                    (observe event))
-                  (notify-watches this watches old-root v)))
-         :default (notify-watches this watches old-root v)))
+    (let [ctx sci.ctx-store/*ctx*]
+      (if (vars/owns? ctx this)
+        (let [old-root root]
+          (vars/with-writeable-var this meta
+            (vars/bumping-set! root v))
+          (root-written! this watches old-root v))
+        (let [[old new] (vars/update-binding!
+                         ctx this
+                         (fn [^sci.impl.vars.Binding b]
+                           (vars/->Binding v (.-meta b) (.-watches b))))]
+          (root-written! this (.-watches ^sci.impl.vars.Binding new)
+                         (.-root ^sci.impl.vars.Binding old) v))))
     ;; this is the return value for alter-var-root which should be the only place calling bindRoot directly
     v)
-  (getRawRoot [_this]
-    root)
+  (getRawRoot [this]
+    (if contextual
+      (if-some [b (vars/active-binding this)] (.-root ^sci.impl.vars.Binding b) root)
+      root))
+  (fieldBinding [_this]
+    (vars/->Binding root meta watches))
+  (setContextual [_this]
+    (set! contextual true))
   (toSymbol [_this]
     ;; if we have at least a name from metadata, then build the symbol from that
     (if-let [sym-name (some-> (:name meta) name)]
       (symbol (some-> (:ns meta) types/getName name) sym-name)
       ;; otherwise, fall back to the symbol
       sym))
-  (isMacro [_]
-    (or (:macro meta)
-        (when-some [m (clojure.core/meta root)]
+  (isMacro [this]
+    (or (:macro (clojure.core/meta this))
+        (when-some [m (clojure.core/meta (vars/getRawRoot this))]
           (:sci/macro m))))
   (setThreadBound [this v]
     #?(:cljd (set! thread-bound v)
        :default (set! (.-thread-bound this) v)))
   (unbind [this]
-    (vars/with-writeable-var this meta
-      (vars/bumping-set! (.-root this) (vars/->SciUnbound this))))
-  (hasRoot [_this]
+    (let [ctx sci.ctx-store/*ctx*]
+      (if (vars/owns? ctx this)
+        (vars/with-writeable-var this meta
+          (vars/bumping-set! (.-root this) (vars/->SciUnbound this)))
+        (vars/update-binding! ctx this
+                              (fn [^sci.impl.vars.Binding b]
+                                (vars/->Binding (vars/->SciUnbound this)
+                                                (.-meta b) (.-watches b)))))))
+  (hasRoot [this]
     (not (instance? #?(:cljd vars/SciUnbound
                        :clj sci.impl.vars.SciUnbound
-                       :cljs sci.impl.vars.SciUnbound) root)))
+                       :cljs sci.impl.vars.SciUnbound) (vars/getRawRoot this))))
   vars/DynVar
-  (dynamic? [_this]
-    (:dynamic meta))
+  (dynamic? [this]
+    (:dynamic (clojure.core/meta this)))
   types/IBox
   (setVal [this v]
     (if-let [b (vars/get-thread-binding this)]
@@ -167,7 +205,7 @@
          :cljs (if (:unrestricted sci.ctx-store/*ctx*)
                  (vars/bumping-set! (.-root this) v)
                  (throw-root-binding this)))))
-  (getVal [_this] root)
+  (getVal [this] (vars/getRawRoot this))
   #?(:cljd IDeref :clj clojure.lang.IDeref :cljs IDeref)
   (#?(:cljd -deref
       :clj deref
@@ -175,8 +213,10 @@
     (if thread-bound
       (if-let [tbox (vars/get-thread-binding this)]
         (types/getVal tbox)
-        root)
-      root))
+        (vars/getRawRoot this))
+      (if contextual
+        (if-some [b (vars/active-binding this)] (.-root ^sci.impl.vars.Binding b) root)
+        root)))
   Object
   (toString [this]
     (str "#'" (vars/toSymbol this)))
@@ -185,7 +225,12 @@
                        (-write writer "#'")
                        (-pr-writer (vars/toSymbol a) writer opts)))
   #?(:cljd IMeta :clj clojure.lang.IMeta :cljs IMeta)
-  #?(:cljd (-meta [_] meta) :clj (clojure.core/meta [_] meta) :cljs (-meta [_] meta))
+  #?(:cljd (-meta [this] (if contextual (if-some [b (vars/active-binding this)] (.-meta b) meta) meta))
+     :clj (clojure.core/meta [this]
+            (if contextual
+              (if-some [b (vars/active-binding this)] (.-meta ^sci.impl.vars.Binding b) meta)
+              meta))
+     :cljs (-meta [this] (if contextual (if-some [b (vars/active-binding this)] (.-meta b) meta) meta)))
   ;; #?(:clj Comparable :cljs IEquiv)
   ;; (-equiv [this other]
   ;;   (if (instance? Var other)
@@ -196,11 +241,22 @@
   ;;   (hash-symbol sym))
   #?@(:cljd [] :clj [clojure.lang.IReference
                      (alterMeta [this f args]
-                                (vars/with-writeable-var this meta
-                                  (locking this (set! meta (apply f meta args)))))
+                                (let [ctx sci.ctx-store/*ctx*]
+                                  (if (vars/owns? ctx this)
+                                    (vars/with-writeable-var this meta
+                                      (locking this (set! meta (apply f meta args))))
+                                    (let [[_ new] (vars/update-binding!
+                                                   ctx this
+                                                   (fn [^sci.impl.vars.Binding b]
+                                                     (vars/->Binding
+                                                      (.-root b)
+                                                      (with-field-generation
+                                                        (vars/fieldBinding this)
+                                                        (apply f (.-meta b) args))
+                                                      (.-watches b))))]
+                                      (.-meta ^sci.impl.vars.Binding new)))))
                      (resetMeta [this m]
-                                (vars/with-writeable-var this meta
-                                  (locking this (set! meta m))))])
+                                (.alterMeta this (fn [_ m] m) (list m)))])
   #?@(:cljd [types/IResetMeta
              (-reset-meta! [this m]
                (vars/with-writeable-var this meta
@@ -215,13 +271,27 @@
                               (set! watches (dissoc watches key)))
                             this)]
       :clj [clojure.lang.IRef
-            (addWatch [this key fn]
-                      (vars/with-writeable-var this meta
-                        (set! watches (assoc watches key fn)))
+            (addWatch [this key f]
+                      (let [ctx sci.ctx-store/*ctx*]
+                        (if (vars/owns? ctx this)
+                          (vars/with-writeable-var this meta
+                            (set! watches (assoc watches key f)))
+                          (vars/update-binding!
+                           ctx this
+                           (fn [^sci.impl.vars.Binding b]
+                             (vars/->Binding (.-root b) (.-meta b)
+                                             (assoc (.-watches b) key f))))))
                       this)
             (removeWatch [this key]
-                         (vars/with-writeable-var this meta
-                           (set! watches (dissoc watches key)))
+                         (let [ctx sci.ctx-store/*ctx*]
+                           (if (vars/owns? ctx this)
+                             (vars/with-writeable-var this meta
+                               (set! watches (dissoc watches key)))
+                             (vars/update-binding!
+                              ctx this
+                              (fn [^sci.impl.vars.Binding b]
+                                (vars/->Binding (.-root b) (.-meta b)
+                                                (dissoc (.-watches b) key))))))
                          this)]
       :cljs [IWatchable
             (-add-watch [this key fn]

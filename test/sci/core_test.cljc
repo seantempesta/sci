@@ -1467,8 +1467,9 @@
     (is (nil? (sci/resolve parent 'fork-only)))
     (is (= :parent (sci/eval-string* parent "shared")))
     (is (= :fork (sci/eval-string* forked "shared")))
-    (is (not (identical? (sci/resolve parent 'shared)
-                         (sci/resolve forked 'shared))))
+    (is (identical? (sci/resolve parent 'shared)
+                    (sci/resolve forked 'shared))
+        "a redefinition keeps the Var; each context reads its own binding")
     (let [bound-var (sci/bind-root! forked
                                     (sci/resolve forked 'bound)
                                     :fork-bound)]
@@ -1499,14 +1500,15 @@
        (is (= "Parent." (sci/eval-string* parent "(:doc (meta #'shared))")))
        (is (= "Fork." (sci/eval-string* altered "(:doc (meta #'shared))")))
        (is (= "Reset." (sci/eval-string* reset "(:doc (meta #'shared))")))
-       (is (= :parent (sci/eval-string* altered "(shared)")) "the copy keeps the root")
+       (is (= :parent (sci/eval-string* altered "(shared)")) "the fork's binding keeps the root")
        (doseq [fork [altered reset]]
-         (is (= (:sci/generation @(:env fork))
-                (:sci/generation (meta (sci/resolve fork 'shared))))
-             "the copy is owned by the fork generation"))
+         (is (identical? parent-var (sci/resolve fork 'shared)))
+         (is (= (:sci/generation (meta parent-var))
+                (sci/eval-string* fork "(:sci/generation (meta #'shared))"))
+             "a fork's binding never changes which generation owns the Var"))
        (sci/eval-string* altered "(alter-meta! #'shared dissoc :sci/generation)")
-       (is (= (:sci/generation @(:env altered))
-              (:sci/generation (meta (sci/resolve altered 'shared))))
+       (is (= (:sci/generation (meta parent-var))
+              (sci/eval-string* altered "(:sci/generation (meta #'shared))"))
            "a metadata write cannot remove the dependency-owned generation"))))
 
 #?(:clj

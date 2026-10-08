@@ -38,11 +38,6 @@
                        (let [m (meta prev)]
                          (lang/->Var prev var-name m false false nil (:ns m)))
 
-                       (and (not (vars/built-in-var? (meta prev)))
-                            (not= (:sci/generation (meta prev))
-                                  (:sci/generation env)))
-                       (lang/->Var @prev var-name m false false nil (:ns m))
-
                        :else prev)
                 the-current-ns (assoc the-current-ns var-name prev)]
             (assoc-in env [:namespaces cnn] the-current-ns)))

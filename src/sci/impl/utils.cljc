@@ -5,6 +5,7 @@
             #?(:cljs [goog.object :as gobject])
             [sci.impl.macros :as macros]
             [sci.impl.types :as t]
+            [sci.ctx-store :as store]
             [sci.impl.vars :as vars]
             [sci.lang :as lang])
   #?(:cljs (:import [goog.string StringBuffer]))
@@ -391,41 +392,17 @@
 
 (declare var?)
 
-(defn owned-var
-  "The var ctx may mutate for sci-var: sci-var itself when ctx's generation
-  owns it; else the owned var already bound at its namespace and name in ctx
-  (an earlier write through the same inherited handle copied it there), so
-  consecutive writes compose; else a copy of the current binding (or of
-  sci-var when its name is unbound) stamped with ctx's generation and
-  installed in ctx's namespace map. An inherited var is never mutated."
-  [ctx sci-var]
-  (let [env (:env ctx)
-        env-value @env
-        generation (:sci/generation env-value)
-        owned? #(= (:sci/generation (meta %)) generation)]
-    (if (owned? sci-var)
-      sci-var
-      (let [var-name (vars/toSymbol sci-var)
-            ns-name (t/getName (:ns (meta sci-var)))
-            intern-name (unqualify-symbol var-name)
-            current (get-in env-value [:namespaces ns-name intern-name])
-            source (if (var? current) current sci-var)]
-        (if (owned? source)
-          source
-          (let [copied-var (new-var var-name (vars/getRawRoot source)
-                                    (generation-meta env-value (meta source)))]
-            (swap! env assoc-in [:namespaces ns-name intern-name] copied-var)
-            copied-var))))))
-
 (defn bind-root!
-  "Binds a var root owned by ctx, copying an inherited var before mutation.
-  The written var is marked :sci/rebound: its root no longer comes from the
-  definition that last set its metadata (a def resets metadata, clearing it)."
+  "Binds sci-var's root in ctx and returns sci-var: in place when ctx owns
+  it, else as ctx's own binding, so every reference to the Var analyzed in
+  any context reads ctx's root when ctx executes it. The Var is marked
+  :sci/rebound: its root no longer comes from the definition that last set
+  its metadata (a def resets metadata, clearing it)."
   [ctx sci-var val]
-  (let [owned (owned-var ctx sci-var)]
-    (vars/bindRoot owned val)
-    (alter-meta! owned assoc :sci/rebound true)
-    owned))
+  (store/with-ctx ctx
+    (vars/bindRoot sci-var val)
+    (alter-meta! sci-var assoc :sci/rebound true))
+  sci-var)
 
 (defn var? [x]
   (instance? #?(:cljd lang/Var :clj sci.lang.Var :cljs sci.lang.Var) x))

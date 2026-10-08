@@ -333,11 +333,14 @@
 
 (defn fork
   "Forks a context (as produced with `init`) into a new context. New and
-  redefined vars in the new context won't be visible in the original context."
+  redefined vars in the new context won't be visible in the original context,
+  nor the original's later writes in the new one. A Var keeps its identity:
+  code analyzed in either context reads the binding of the context executing
+  it. Both contexts get a new generation, so neither writes a shared Var in
+  place."
   [ctx]
-  (update ctx :env
-          (fn [env]
-            (atom (assoc @env :sci/generation (utils/next-generation))))))
+  (let [env (swap! (:env ctx) assoc :sci/generation (utils/next-generation))]
+    (assoc ctx :env (atom (assoc env :sci/generation (utils/next-generation))))))
 
 (defn eval-string*
   "Evaluates string `s` in the context of `ctx` (as produced with
@@ -839,6 +842,7 @@
   Interpreted functions carry their analyzed closure inputs as data. A
   function not created by SCI reports an explicit unrestorable reason."
   [ctx qualified-symbols]
+  (store/with-ctx ctx
   (mapv
    (fn [qualified-symbol]
      (let [sci-var (resolve ctx qualified-symbol)
@@ -864,7 +868,7 @@
 
          :else
          (assoc base :sci.root/value root))))
-   qualified-symbols))
+   qualified-symbols)))
 
 (defn- function-from-root-data [ctx namespace-name function-data]
   (let [captures (:sci.root/captures function-data)

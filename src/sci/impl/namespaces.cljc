@@ -863,17 +863,6 @@
                  {:var v})))))
 
 #?(:clj
-   (defn- owned-meta-ref
-     "The reference a metadata write may mutate: a writable SCI var follows the
-     root-write ownership rule (`utils/owned-var`), so an inherited var is copied
-     into this ctx before its metadata changes; other references are unchanged."
-     [iref]
-     (let [ctx (store/get-ctx)]
-       (if (and ctx (utils/var? iref) (not (vars/built-in-var? (meta iref))))
-         (utils/owned-var ctx iref)
-         iref))))
-
-#?(:clj
    (defn- keep-generation
      "Keep the dependency-owned generation and rebound stamps through a
      metadata write."
@@ -886,15 +875,13 @@
    (defn- sci-alter-meta!
      [iref f & args]
      (refuse-compiled-var-metadata-write! iref)
-     (let [ref (owned-meta-ref iref)]
-       (clojure.core/alter-meta! ref #(keep-generation ref (apply f % args))))))
+     (clojure.core/alter-meta! iref #(keep-generation iref (apply f % args)))))
 
 #?(:clj
    (defn- sci-reset-meta!
      [iref m]
      (refuse-compiled-var-metadata-write! iref)
-     (let [ref (owned-meta-ref iref)]
-       (clojure.core/reset-meta! ref (keep-generation ref m)))))
+     (clojure.core/reset-meta! iref (keep-generation iref m))))
 
 ;;;; End binding vars
 

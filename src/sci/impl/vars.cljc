@@ -103,7 +103,61 @@
   (isMacro [this])
   (hasRoot [this])
   (setThreadBound [this v])
-  (unbind [this]))
+  (unbind [this])
+  (fieldBinding [this]
+    "The Var's own root, metadata and watches: its binding in every context
+    that has no binding of its own for it.")
+  (setContextual [this]
+    "Marks the Var as bound per context: a context that does not own it has
+    written it, so reads consult the executing context's bindings."))
+
+(deftype Binding [root meta watches])
+
+(defn context-binding
+  "ctx's own binding of sci-var (a Binding), or nil when ctx has none."
+  [ctx sci-var]
+  (when-some [m (get @(:env ctx) :sci/var-bindings)]
+    #?(:clj (.get ^java.util.Map m sci-var)
+       :default (get m sci-var))))
+
+(defn active-binding
+  "The executing context's own binding of sci-var, or nil."
+  [sci-var]
+  (when-some [ctx sci.ctx-store/*ctx*]
+    (context-binding ctx sci-var)))
+
+(defn owns?
+  "Whether ctx writes sci-var in place: no context (a host write), a
+  built-in, or a Var born in ctx's current generation. A fork renews the
+  generation of both contexts, so neither owns a Var they share."
+  [ctx sci-var]
+  (or (nil? ctx)
+      (let [m (.-meta ^Binding (fieldBinding sci-var))]
+        (or (:sci/built-in m)
+            (= (:sci/generation @(:env ctx)) (:sci/generation m))))))
+
+(defn update-binding!
+  "Writes ctx's own binding of sci-var to (f its current binding); the Var
+  object stays the one every analyzed reference holds. Returns the
+  [old new] bindings."
+  [ctx sci-var f]
+  (setContextual sci-var)
+  (let [old (volatile! nil)
+        new (volatile! nil)]
+    (swap! (:env ctx)
+           (fn [env]
+             (let [m (get env :sci/var-bindings {})
+                   b (or (get m sci-var)
+                         ;; a context's first own binding starts from the
+                         ;; Var's root and metadata; the Var's watches
+                         ;; observe writes of the contexts that own it
+                         (let [^Binding field (fieldBinding sci-var)]
+                           (->Binding (.-root field) (.-meta field) nil)))
+                   b' (f b)]
+               (vreset! old b)
+               (vreset! new b')
+               (assoc env :sci/var-bindings (assoc m sci-var b')))))
+    [@old @new]))
 
 (defprotocol DynVar
   (dynamic? [this]))
