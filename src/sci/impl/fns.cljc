@@ -3,8 +3,9 @@
   (:require
    [sci.impl.macros :as macros]
    [sci.impl.types :as types]
-   [sci.impl.utils :as utils :refer [recur]])
-  #?(:cljs (:require-macros [sci.impl.fns :refer [gen-fn wrap-this-as]])))
+   [sci.impl.utils :as utils :refer [recur]]
+   #?(:cljd [] :default [sci.ctx-store]))
+  #?(:cljs (:require-macros [sci.impl.fns :refer [gen-fn wrap-this-as in-defining-ctx]])))
 
 #?(:cljd nil :clj (set! *warn-on-reflection* true))
 
@@ -20,6 +21,24 @@
                         (when ~'this-as-idx
                           (aset ~'invoc-array ~'this-as-idx (~'js* "this")))
                         ~@body))))
+
+;; A host thread that SCI did not enter (a raw Thread, an executor, a callback)
+;; has no sci.ctx-store/*ctx*, so the Var reads and writes of an SCI fn called
+;; there would select no context's binding and answer each Var's field binding,
+;; which only the Var's creating context writes. Such a call re-enters the fn
+;; under the context it was defined in. With a context active, the fn runs
+;; under it: an inherited fn called in a fork sees the fork's definitions.
+;; The check is one *ctx* deref per call; the binding happens only on entry
+;; from a context-less thread, so nested calls never bind again.
+#?(:cljd
+   (defmacro in-defining-ctx [_self-call body]
+     body)
+   :default
+   (defmacro in-defining-ctx [self-call body]
+     (macros/? :clj `(if (nil? sci.ctx-store/*ctx*)
+                       (binding [sci.ctx-store/*ctx* ~'ctx] ~self-call)
+                       ~body)
+               :cljs body)))
 
 ;; The interrupt-fn check in the generated fns below uses
 ;; (when-not (nil? interrupt-fn#) ...) rather than (when (some? interrupt-fn#) ...).
@@ -40,6 +59,8 @@
               interrupt-fn# (:interrupt-fn ~'ctx)]
           (fn ~'arity-0 ~(cond-> []
                            varargs (conj '& varargs-param))
+           (in-defining-ctx
+            ~(if varargs `(apply ~'arity-0 ~varargs-param) `(~'arity-0))
             (let [~'invoc-array (when-not (zero? ~'invoc-size)
                                   #?(:cljd (#/(List/filled dynamic) ~'invoc-size nil)
                                      :default (object-array ~'invoc-size)))]
@@ -53,7 +74,7 @@
                  (let [ret# (types/eval ~'body ~'ctx ~'invoc-array)]
                    (if (identical? recur# ret#)
                      (recur)
-                     ret#))))))))
+                     ret#)))))))))
      (let [fn-params (vec (repeatedly n gensym))
            varargs-param (when varargs (gensym))
            asets `(do ~@(map (fn [fn-param idx]
@@ -64,6 +85,10 @@
               interrupt-fn# (:interrupt-fn ~'ctx)]
           (fn ~(symbol (str "arity-" n)) ~(cond-> fn-params
                                             varargs (conj '& varargs-param))
+           (in-defining-ctx
+            ~(if varargs
+               `(apply ~(symbol (str "arity-" n)) ~@fn-params ~varargs-param)
+               `(~(symbol (str "arity-" n)) ~@fn-params))
             (let [~'invoc-array (when-not (zero? ~'invoc-size)
                                   #?(:cljd (#/(List/filled dynamic) ~'invoc-size nil)
                                      :default (object-array ~'invoc-size)))]
@@ -78,7 +103,7 @@
                  (let [ret# (types/eval ~'body ~'ctx ~'invoc-array)]
                    (if (identical? recur# ret#)
                      (recur)
-                     ret#)))))))))))
+                     ret#))))))))))))
 
 #_(require '[clojure.pprint :as pprint])
 #_(binding [*print-meta* true]
@@ -151,6 +176,8 @@
                (let [recur# recur
                      interrupt-fn# (:interrupt-fn ctx)]
                  (fn arity-many [& args]
+                  (in-defining-ctx
+                   (apply arity-many args)
                    (let [invoc-array (when-not (zero? invoc-size)
                                        #?(:cljd (#/(List/filled dynamic) invoc-size nil)
                                           :default (object-array invoc-size)))]
@@ -167,7 +194,7 @@
                        (let [ret (types/eval body ctx invoc-array)]
                          (if (identical? recur# ret)
                            (recur)
-                           ret))))))))]
+                           ret)))))))))]
      f)))
 
 (defn lookup-by-arity [arities arity]
