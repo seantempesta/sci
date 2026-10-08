@@ -239,3 +239,35 @@
           ctx2 (sci/merge-opts ctx {:namespaces {'user {'x 1}}})]
       (is (thrown-with-msg? #?(:clj Exception :cljs js/Error) #"Interrupted"
             (sci/eval-string* ctx2 "(loop [] (recur))"))))))
+
+#?(:clj
+   (deftest range-test
+     (let [ev  #(sci/eval-string* (interrupt-init 1000) %)]
+       ;; LongRange counts as an int, so O(1) holds up to Integer/MAX_VALUE
+       (testing "count of a finite range is O(1)"
+         (is (= 2000000000 (ev "(count (range 2000000000))")))
+         (is (= 3 (ev "(count (range 10 0 -4))"))))
+       (testing "runaway ranges are interrupted"
+         (doseq [code ["(doall (range 10000000000))"
+                       "(reduce + (range 10000000000))"
+                       "(reduce + 0 (range 10000000000))"
+                       "(into [] (range 10000000000))"
+                       "(doall (range))"]]
+           (is (thrown-with-msg? Exception #"Interrupted" (ev code)) code)))
+       (testing "metadata"
+         (is (= {:a 1} (ev "(meta (with-meta (range 3) {:a 1}))")))
+         (is (= [0 1 2] (ev "(vec (with-meta (range 3) {:a 1}))")))
+         (is (nil? (ev "(meta (range 3))"))))
+       (testing "results match core"
+         (doseq [code ["(= (range 3) '(0 1 2))" "(= '(0 1 2) (range 3))" "(= (range 3) (range 3))"
+                       "(hash (range 3))" "(seq? (range 3))" "(rest (range 1 4))" "(next (range 1))"
+                       "(reduce + (range 1))" "(reduce + (range 0))" "(reduce + 10 (range 4))"
+                       "(reduce (fn [a x] (if (> x 40) (reduced a) (+ a x))) (range 100))"
+                       "(vec (range 5))" "(into [] (map inc) (range 3))" "(vec (for [i (range 3)] i))"
+                       "(conj (range 2) :a)" "(empty (range 3))" "(apply + (range 100))"
+                       "(count (range 10 0 -3))" "(doall (take 3 (drop 40 (range 100))))"
+                       "(partition 2 (range 6))" "(range 5 0 -2)" "(range 2 8 2)" "(range 0)"
+                       "(take 3 (range))" "(range 1 5 0.5)" "(reduce + (range 0.0 10.0 0.5))"]]
+           (is (= (eval (read-string (str "(let [r clojure.core/range] " (pr-str (read-string code)) ")")))
+                  (ev code))
+               code))))))

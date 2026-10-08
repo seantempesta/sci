@@ -70,11 +70,11 @@
            (if-let [n (.chunkedNext s)] (recur n acc) acc))))))
 
 #?(:clj
-   (deftype CheckedRange [^clojure.lang.LongRange r ^clojure.lang.IFn ifn]
+   (deftype CheckedRange [^clojure.lang.LongRange r ^clojure.lang.IFn ifn m]
      clojure.lang.Sequential
      clojure.lang.ISeq
      (first [_] (.first r))
-     (next [_] (when-let [n (.next r)] (ifn) (CheckedRange. n ifn)))
+     (next [_] (when-let [n (.next r)] (ifn) (CheckedRange. n ifn nil)))
      (more [this] (or (.next this) ()))
      (cons [_ o] (.cons r o))
      clojure.lang.Counted
@@ -86,7 +86,7 @@
      (seq [this] this)
      clojure.lang.IChunkedSeq
      (chunkedFirst [_] (ifn) (.chunkedFirst r))
-     (chunkedNext [_] (when-let [n (.chunkedNext r)] (CheckedRange. n ifn)))
+     (chunkedNext [_] (when-let [n (.chunkedNext r)] (CheckedRange. n ifn nil)))
      (chunkedMore [this] (or (.chunkedNext this) ()))
      clojure.lang.IReduceInit
      (reduce [_ f init] (reduce-chunks r ifn f init))
@@ -96,6 +96,10 @@
          (if-let [n (.next r)] (reduce-chunks n ifn f a) a)))
      clojure.lang.IHashEq
      (hasheq [_] (.hasheq r))
+     clojure.lang.IObj
+     (withMeta [_ m'] (CheckedRange. r ifn m'))
+     clojure.lang.IMeta
+     (meta [_] m)
      Iterable
      (iterator [this] (clojure.lang.SeqIterator. (range-seq r ifn)))))
 
@@ -103,7 +107,7 @@
   #?(:clj (instance? CheckedRange coll) :cljs false))
 
 (defn- checked-range [s ifn]
-  #?(:clj (if (instance? clojure.lang.LongRange s) (CheckedRange. s ifn) (range-seq s ifn))
+  #?(:clj (if (instance? clojure.lang.LongRange s) (CheckedRange. s ifn nil) (range-seq s ifn))
      :cljs (range-seq s ifn)))
 
 (defn- sci-range
