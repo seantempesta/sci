@@ -318,3 +318,13 @@
        (is (= 2 (sci/eval-string
                  "(binding [*print-length* 2] (read-host))"
                  {:namespaces {'user {'read-host (fn [] *print-length*)}}}))))))
+
+#?(:clj
+   (deftest a-copied-host-dynamic-var-reads-the-host-binding-test
+     ;; compiled code binding the host Var is seen by interpreted code reading the copy
+     (let [copied (sci/copy-var* #'*host-dynamic* (sci/create-ns 'host))
+           ctx (sci/init {:namespaces {'user {'*host-dynamic* copied}}})]
+       (is (= [:host :root]
+              [(binding [*host-dynamic* :host] (sci/eval-string* ctx "*host-dynamic*"))
+               (sci/eval-string* ctx "*host-dynamic*")]))
+       (is (= 3 (binding [*print-length* 3] (sci/eval-string "*print-length*")))))))

@@ -165,7 +165,8 @@
       ;; NOTE: emit as little code as possible, so our JS bundle is as small as possible
       (if (and (not macro) elide-vars (not dyn) (not ctx))
         sym
-        `(sci.lang/->Var ~init ~nm ~varm false ~ctx nil ~ns))))
+        ;; a host-linked copy starts thread-bound: its reads consult the host Var
+        `(sci.lang/->Var ~init ~nm ~varm ~(boolean (:sci.impl/host-var varm)) ~ctx nil ~ns))))
   (defmacro copy-core-var
     [sym]
     `(copy-var ~sym clojure-core-ns {:copy-meta-from ~(core-sym sym)}))

@@ -135,7 +135,9 @@
                 line (assoc :line line)
                 column (assoc :column column)
                 #?@(:clj [dynamic (assoc :sci.impl/host-var clojure-var)]))]
-    (new-var nm @clojure-var new-m)))
+    (cond-> (new-var nm @clojure-var new-m)
+      ;; reads consult the host Var's binding on every thread
+      #?(:clj dynamic :default false) (doto (vars/setThreadBound true)))))
 
 (macros/deftime
   (defmacro with-bindings

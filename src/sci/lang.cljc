@@ -217,7 +217,13 @@
     (if thread-bound
       (if-let [tbox (vars/get-thread-binding this)]
         (types/getVal tbox)
-        (vars/getRawRoot this))
+        ;; a copy of a host dynamic Var reads the host's binding on this
+        ;; thread, as compiled code would
+        #?(:clj (let [^clojure.lang.Var host (:sci.impl/host-var meta)]
+                  (if (and host (.getThreadBinding host))
+                    (.deref host)
+                    (vars/getRawRoot this)))
+           :default (vars/getRawRoot this)))
       (if contextual
         (if-some [b (vars/active-binding this)] (.-root ^sci.impl.vars.Binding b) root)
         root)))
