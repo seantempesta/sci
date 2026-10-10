@@ -386,6 +386,10 @@
        :clj (or
              (when-let [p (:protocol protocol)]
                (clojure.core/satisfies? p obj))
+             ;; a host protocol (the map a copied defprotocol Var holds)
+             ;; answers as it does in compiled code
+             (and (:on-interface protocol)
+                  (clojure.core/satisfies? protocol obj))
              (find-matching-non-default-method protocol obj)))))
 
 (defn instance-impl [clazz x]

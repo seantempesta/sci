@@ -464,3 +464,9 @@
   (is (true? (sci/eval-string "(defprotocol IFoo) (extend-type #?(:cljd bool :clj (class true) :cljs boolean) IFoo) (satisfies? IFoo false)"
                               {:classes #?(:cljd nil :clj nil :cljs {'js #js {:Boolean js/Boolean}})
                                :features #?(:cljd #{:cljd} :clj #{:clj} :cljs #{:cljs})}))))
+
+#?(:clj
+   (deftest a-copied-host-protocol-is-satisfied-as-in-compiled-code-test
+     ;; the Var's value is the host protocol map, carrying no SCI :protocol
+     (let [ctx (sci/init {:namespaces {'host {'IKVReduce (sci/copy-var* #'p/IKVReduce (sci/create-ns 'host))}}})]
+       (is (= [true false] (sci/eval-string* ctx "[(satisfies? host/IKVReduce {}) (satisfies? host/IKVReduce 1)]"))))))
