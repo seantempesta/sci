@@ -196,7 +196,11 @@
            (if (not (identical? t (Thread/currentThread)))
              (throw (IllegalStateException.
                      (format "Can't set!: %s from non-binding thread" (vars/toSymbol this))))
-             (types/setVal b v)))
+             (do
+               ;; the host Var this one was copied from holds the same binding
+               (when-some [^clojure.lang.Var host (:sci.impl/host-var meta)]
+                 (when (.getThreadBinding host) (.set host v)))
+               (types/setVal b v))))
          :cljs (types/setVal b v))
       #?(:cljd (if (:unrestricted sci.ctx-store/*ctx*)
                  (set! (.-root this) v)

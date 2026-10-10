@@ -133,7 +133,8 @@
                 tag (assoc :tag tag)
                 file (assoc :file file)
                 line (assoc :line line)
-                column (assoc :column column))]
+                column (assoc :column column)
+                #?@(:clj [dynamic (assoc :sci.impl/host-var clojure-var)]))]
     (new-var nm @clojure-var new-m)))
 
 (macros/deftime

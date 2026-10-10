@@ -32,9 +32,12 @@
            (throw (ex-info (str "Built-in namespace " name# " is read-only.")
                            {:ns ns-obj#})))))))
 
-(deftype Frame [bindings prev])
+;; host? is true when pushing this frame also pushed a host (JVM) binding
+;; frame, which popping it pops: a SCI Var copied from a host dynamic Var
+;; carries that Var as :sci.impl/host-var, and binding it binds both.
+(deftype Frame [bindings prev host?])
 
-(def top-frame (Frame. {} nil))
+(def top-frame (Frame. {} nil false))
 
 #?(:cljd
    (def dvals (volatile! top-frame))
@@ -89,7 +92,7 @@
   (let [^Frame f #?(:cljd @dvals
                     :clj (.get dvals)
                     :cljs @dvals)]
-    (Frame. (.-bindings f) nil)))
+    (Frame. (.-bindings f) nil false)))
 
 (defn reset-thread-binding-frame [frame]
   #?(:cljd (vreset! dvals frame)
@@ -168,26 +171,37 @@
 
 (defn push-thread-bindings [bindings]
   (let [^Frame frame (get-thread-binding-frame)
+        ;; the host Vars the bound SCI Vars were copied from, with their values
+        host #?(:clj (volatile! nil) :default nil)
         bmap (.-bindings frame)
         bmap (reduce (fn [acc [var* val*]]
-                       (when (not (dynamic? var*))
-                         (throw #?(:cljd (ex-info (str "Can't dynamically bind non-dynamic var " var*) {})
-                                   :clj (new IllegalStateException
-                                             (str "Can't dynamically bind non-dynamic var " var*))
-                                   :cljs (new js/Error
-                                              (str "Can't dynamically bind non-dynamic var " var*)))))
-                       (setThreadBound var* true)
-                       (assoc acc var* (TBox. #?(:cljd nil
-                                                 :clj (Thread/currentThread)
-                                                 :cljs nil) val*)))
+                       (let [m #?(:clj (when (instance? clojure.lang.IMeta var*)
+                                         (clojure.core/meta var*))
+                                  :default nil)]
+                         (when (not #?(:clj (:dynamic m) :default (dynamic? var*)))
+                           (throw #?(:cljd (ex-info (str "Can't dynamically bind non-dynamic var " var*) {})
+                                     :clj (new IllegalStateException
+                                               (str "Can't dynamically bind non-dynamic var " var*))
+                                     :cljs (new js/Error
+                                                (str "Can't dynamically bind non-dynamic var " var*)))))
+                         #?(:clj (when-some [host-var (:sci.impl/host-var m)]
+                                   (vswap! host assoc host-var val*)))
+                         (setThreadBound var* true)
+                         (assoc acc var* (TBox. #?(:cljd nil
+                                                   :clj (Thread/currentThread)
+                                                   :cljs nil) val*))))
                      bmap
-                     bindings)]
+                     bindings)
+        host #?(:clj @host :default nil)]
     #?(:cljs (bump-var-epoch!))
-    (reset-thread-binding-frame (Frame. bmap frame))))
+    #?(:clj (when host (clojure.lang.Var/pushThreadBindings host)))
+    (reset-thread-binding-frame (Frame. bmap frame (some? host)))))
 
 (defn pop-thread-bindings []
   #?(:cljs (bump-var-epoch!))
   ;; type hint needed to satisfy CLJS compiler / shadow
+  #?(:clj (when (.-host? ^Frame (get-thread-binding-frame))
+            (clojure.lang.Var/popThreadBindings)))
   (if-let [f (.-prev ^Frame (get-thread-binding-frame))]
     (if (identical? top-frame f)
       #?(:cljd (vreset! dvals top-frame)

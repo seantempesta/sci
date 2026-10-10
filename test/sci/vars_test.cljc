@@ -296,3 +296,25 @@
            (sci/init
             (addons/future {}))
            "@(future (load-string \"(set! *warn-on-reflection* true)\"))")))))
+
+#?(:clj
+   (do
+     (def ^:dynamic *host-dynamic* :root)
+     (deftest binding-a-copied-host-dynamic-var-binds-the-host-var-test
+       ;; compiled code reading the host Var sees the SCI binding, its set!
+       ;; and its end; a copy of a non-dynamic Var stays SCI's own
+       (let [ns (sci/create-ns 'host)
+             copied (sci/copy-var* #'*host-dynamic* ns)
+             read-host (fn [] *host-dynamic*)]
+         (is (= [:bound :set :root :root]
+                (sci/eval-string
+                 "[(binding [*host-dynamic* :bound] (read-host))
+                   (binding [*host-dynamic* :bound] (set! *host-dynamic* :set) (read-host))
+                   (read-host)
+                   (try (binding [*host-dynamic* :thrown] (throw (ex-info \"x\" {})))
+                        (catch Exception _ (read-host)))]"
+                 {:namespaces {'user {'*host-dynamic* copied 'read-host read-host}}})))))
+     (deftest binding-sci-print-length-binds-the-host-var-test
+       (is (= 2 (sci/eval-string
+                 "(binding [*print-length* 2] (read-host))"
+                 {:namespaces {'user {'read-host (fn [] *print-length*)}}}))))))
