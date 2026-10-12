@@ -201,8 +201,10 @@
                          loading (replace {lib lib-emphasized} loading)]
                      (str "Cyclic load dependency: " (str/join "->" loading)))
                    lib)
-                  (when-not (= lib cnn)
-                    (reset! env* (handle-require-libspec-env ctx env cnn the-loaded-ns lib opts)))))
+                  ;; a self-require still aliases, as Clojure's does; a
+                  ;; namespace's own vars are already its own mappings
+                  (reset! env* (handle-require-libspec-env ctx env cnn the-loaded-ns lib
+                                                           (if (= lib cnn) (select-keys opts [:as]) opts)))))
               (if-let [load-fn (:load-fn env)]
                 (let [curr-ns @utils/current-ns]
                   (if-let [{:keys [file source handled]}

@@ -443,7 +443,9 @@ bar/bar"}
   (is (= 1 (sci/eval-string "(require 'foo) foo/x"
                             {:load-fn (fn [{:keys [:namespace]}]
                                         (case namespace
-                                          foo {:source "(ns foo (:require foo)) (def x 1)"}))}))))
+                                          foo {:source "(ns foo (:require foo)) (def x 1)"}))})))
+  ;; as in Clojure, a namespace requiring itself with :as gains the alias
+  (is (= 1 (sci/eval-string "(ns foo) (defn f [] 1) (in-ns 'foo) (require '[foo :as a]) (a/f)"))))
 
 (deftest as-alias-test
   (is (= :dude/bar (sci/eval-string "(ns my-ns (:require [dude :as-alias foo])) ::foo/bar")))
