@@ -216,3 +216,41 @@
                  (ev fork "[(host/thread (fn [] [holder (priv)]))
                             (host/pool (fn [] [holder (priv)]))]")))
           (finally (alter-var-root #'store/*ctx* (constantly stored))))))))
+
+(deftest a-fork-of-a-frozen-context-writes-nothing
+  (let [builder (sci/init {})
+        _ (ev builder "(defn g [] :value) (defn h [] (g)) (def n 0) (def ^:dynamic *d* :value)")
+        value (sci/freeze builder)
+        held (:env value)
+        a (sci/fork value)
+        b (sci/fork value)]
+    (is (map? held) "the value's env is the held map")
+    (testing "evaluating against the value itself is refused by its type"
+      (is (thrown? ClassCastException (ev value "(def n 1)"))))
+    (ev a "(defn g [] :a) (alter-var-root #'n inc) (def private (atom 1)) (alter-meta! #'h assoc :doc \"A.\")")
+    (ev b "(ns-unmap *ns* 'h) (defn g [] :b)")
+    (is (identical? held (:env value)) "forking and the forks' writes leave the value untouched")
+    (is (= [:a :a 1 "A." true] (ev a "[(g) (h) n (:doc (meta #'h)) (some? (resolve 'private))]")))
+    (is (= [:b nil 0] (ev b "[(g) (resolve 'h) n]")) "a sibling sees none of a's writes")
+    (testing "a new fork of the value sees the value, none of its forks"
+      (is (= [:value :value 0 nil nil] (ev (sci/fork value) "[(g) (h) n (:doc (meta #'h)) (resolve 'private)]"))))
+    (testing "the builder's later writes never reach the value"
+      (ev builder "(defn g [] :builder-after)")
+      (is (= :value (ev (sci/fork value) "(h)"))))
+    (testing "a fork of a live context still renews its source's generation"
+      (let [live (sci/init {})
+            before (:sci/generation @(:env live))]
+        (sci/fork live)
+        (is (not= before (:sci/generation @(:env live))))))
+    (testing "a fork of the value costs under 1 µs and 3 KB"
+      (dotimes [_ 20000] (sci/fork value))
+      (let [n 100000
+            ^com.sun.management.ThreadMXBean mx (java.lang.management.ManagementFactory/getThreadMXBean)
+            thread (.getId (Thread/currentThread))
+            b0 (.getThreadAllocatedBytes mx thread)
+            t0 (System/nanoTime)
+            _ (dotimes [_ n] (sci/fork value))
+            ns-per (/ (- (System/nanoTime) t0) (double n))
+            bytes-per (/ (- (.getThreadAllocatedBytes mx thread) b0) (double n))]
+        (is (< ns-per 1000.0) "a fork takes under a microsecond")
+        (is (< bytes-per 3072.0) "a fork allocates under 3 KB")))))

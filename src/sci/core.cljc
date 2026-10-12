@@ -335,15 +335,26 @@
   (opts/merge-opts ctx opts))
 
 (defn fork
-  "Forks a context (as produced with `init`) into a new context. New and
-  redefined vars in the new context won't be visible in the original context,
-  nor the original's later writes in the new one. A Var keeps its identity:
-  code analyzed in either context reads the binding of the context executing
-  it. Both contexts get a new generation, so neither writes a shared Var in
-  place."
+  "Forks a context (as produced with `init` or `freeze`) into a new context.
+  New and redefined vars in the new context won't be visible in the original
+  context, nor the original's later writes in the new one. A Var keeps its
+  identity: code analyzed in either context reads the binding of the context
+  executing it. The new context gets a new generation, so it writes no shared
+  Var in place; a live original gets one too, and a frozen one is not
+  written."
   [ctx]
-  (let [env (swap! (:env ctx) assoc :sci/generation (utils/next-generation))]
+  (let [env (:env ctx)
+        env (if (map? env)
+              env
+              (swap! env assoc :sci/generation (utils/next-generation)))]
     (assoc ctx :env (atom (assoc env :sci/generation (utils/next-generation))))))
+
+(defn freeze
+  "The context as a value: its `:env` is the held map, so nothing evaluates
+  against it or writes it; `fork` it to evaluate. The original's later writes
+  never reach the value."
+  [ctx]
+  (update (fork ctx) :env deref))
 
 (defn eval-string*
   "Evaluates string `s` in the context of `ctx` (as produced with
