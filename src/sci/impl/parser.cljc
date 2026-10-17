@@ -157,9 +157,14 @@
                                                   (some-> (@utils/eval-resolve-state ctx {} t)
                                                           meta
                                                           :sci.impl.record/map-constructor)
-                                                  (when-let [f @default-data-reader-fn]
-                                                    (fn [form]
-                                                      (f t form)))))
+                                                  ;; as clojure.lang.LispReader's CtorReader: the
+                                                  ;; built-in tags (#inst, #uuid) read before the
+                                                  ;; default data reader fn, which edamame applies
+                                                  (when-not #?(:clj (contains? default-data-readers t)
+                                                               :default false)
+                                                    (when-let [f @default-data-reader-fn]
+                                                      (fn [form]
+                                                        (f t form))))))
                                    :read-eval (if @read-eval
                                                 (fn [x]
                                                   (utils/eval ctx x))

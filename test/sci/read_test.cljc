@@ -133,3 +133,12 @@ form
 #?(:clj (deftest suppress-read-test
           (sci/eval-string
            "(tagged-literal? (binding [*suppress-read* true] (read-string \"#foo 1\")))")))
+
+#?(:clj (deftest built-in-tag-before-default-data-reader-fn-test
+          (testing "#inst and #uuid read as Clojure's default data readers do while a default data reader fn is bound"
+            (is (= [#inst "2026-01-01" #uuid "00000000-0000-0000-0000-000000000001" '[foo 1]]
+                   (sci/eval-string "
+(binding [*default-data-reader-fn* vector]
+  [(read-string \"#inst \\\"2026-01-01\\\"\")
+   (read-string \"#uuid \\\"00000000-0000-0000-0000-000000000001\\\"\")
+   (read-string \"#foo 1\")])"))))))
