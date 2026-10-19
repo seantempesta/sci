@@ -864,7 +864,9 @@
    (fn [qualified-symbol]
      (let [sci-var (resolve ctx qualified-symbol)
            root (when (utils/var? sci-var) (vars/getRawRoot sci-var))
-           function-data (when (fn? root) (:sci.impl/root-data (meta root)))
+           m (when (fn? root) (meta root))
+           function-data (when-some [f (:sci.impl/root-data-fn m)]
+                           (f (:sci.impl/enclosed m)))
            base {:sci.root/version root-data-version
                  :sci.root/ns (some-> qualified-symbol namespace symbol)
                  :sci.root/name (some-> qualified-symbol name symbol)

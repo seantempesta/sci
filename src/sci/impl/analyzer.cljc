@@ -354,9 +354,21 @@
     m))
 
 ;; :sci.impl/env names the context a function was made in: the one executing
-;; its creation (sci.impl.fns/escaping).
-(defn- with-root-data [f root-data-fn bindings ctx]
-  (vary-meta f assoc :sci.impl/root-data (root-data-fn bindings) :sci.impl/env (:env ctx)))
+;; its creation (sci.impl.fns/escaping). Its root data (sci.core/var-root-data)
+;; is derived when read, from the function's enclosed values: most functions
+;; are closures made per call and never read as a Var root.
+(defn- with-root-data [f root-data-fn enclosed-array ctx]
+  (let [m (meta f)
+        env (:env ctx)]
+    (with-meta f (if (or (nil? m) (= {:sci.impl/fn true} m))
+                   {:sci.impl/fn true
+                    :sci.impl/root-data-fn root-data-fn
+                    :sci.impl/enclosed enclosed-array
+                    :sci.impl/env env}
+                   (-> m
+                       (assoc :sci.impl/root-data-fn root-data-fn)
+                       (assoc :sci.impl/enclosed enclosed-array)
+                       (assoc :sci.impl/env env))))))
 
 (defn single-arity-fn [bindings-fn root-data-fn fn-body fn-name self-ref-in-enclosed-idx self-ref? nsm fn-meta macro?
                        #?@(:cljs [capture-pairs enclosed-array-cnt])]
@@ -386,7 +398,7 @@
                                       ;; added for better error reporting
                                       :sci.impl/inner-fn f))
                    f)
-               f (with-root-data f root-data-fn bindings ctx)]
+               f (with-root-data f root-data-fn enclosed-array ctx)]
            (when self-ref?
              (aset #?(:cljd ^List enclosed-array :default ^objects enclosed-array)
                    self-ref-in-enclosed-idx
@@ -507,13 +519,14 @@
         iden->enclosed-idx (if fn-name
                              (assoc iden->enclosed-idx fn-id closed-over-cnt)
                              iden->enclosed-idx)
+        ;; the root data of a function made here, from its enclosed values
         root-data-fn
-        (fn [#?(:cljd bindings :clj ^objects bindings :cljs ^objects bindings)]
+        (fn [#?(:cljd enclosed :clj ^objects enclosed :cljs ^objects enclosed)]
           {:sci.root/form fn-expr
            :sci.root/captures
            (mapv (fn [[sym iden]]
-                   [sym (aget #?(:cljd ^List bindings :default ^objects bindings)
-                              (get iden->invoke-idx iden))])
+                   [sym (aget #?(:cljd ^List enclosed :default ^objects enclosed)
+                              (get iden->enclosed-idx iden))])
                  closed-over-bindings)})
         [bindings-fn enclosed-array-cnt #?(:cljs capture-pairs :default _capture-pairs)]
         (if (or self-ref? (seq closed-over-iden->binding-idx))
@@ -631,7 +644,7 @@
                                                    ;; added for better error reporting
                                                    :sci.impl/inner-fn f))
                                 f)
-                            f (with-root-data f root-data-fn bindings ctx)]
+                            f (with-root-data f root-data-fn enclosed-array ctx)]
                         (when self-ref?
                           (aset #?(:cljd ^List enclosed-array :default ^objects enclosed-array)
                                 self-ref-in-enclosed-idx

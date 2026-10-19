@@ -117,6 +117,16 @@
 ;; CLJS: x === null) with no Boolean.FALSE truthiness coercion, because the test is
 ;; already a primitive boolean. some? and (not (nil? ...)) instead compile to a Var
 ;; invoke (measured ~2x slower in a JVM microbenchmark of the bare check).
+#?(:clj
+   (defn- native-meta
+     "On the JVM, fn-form with metadata on the form, so the compiled fn holds
+      its own metadata and with-meta copies it, as ctx-fn's does: every SCI
+      function carries metadata (its context and root data), and a fn without
+      it is wrapped by with-meta in an AFunction whose every call goes through
+      applyTo with an argument seq."
+     [env fn-form]
+     (if (:ns env) fn-form (with-meta fn-form {:sci.impl/fn true}))))
+
 (defmacro gen-fn
   ([n]
    `(gen-fn ~n false))
@@ -124,11 +134,15 @@
    `(gen-fn ~n ~disable-arity-checks false))
   ([n _disable-arity-checks varargs]
    (if (zero? n)
-     (let [varargs-param (when varargs (gensym))]
-       `(let [recur# recur
-              interrupt-fn# (:interrupt-fn ~'ctx)]
-          (fn ~'arity-0 ~(cond-> []
-                           varargs (conj '& varargs-param))
+     (let [varargs-param (when varargs (gensym))
+           recur-sym (gensym "recur")
+           interrupt-sym (gensym "interrupt-fn")]
+       `(let [~recur-sym recur
+              ~interrupt-sym (:interrupt-fn ~'ctx)]
+          ~(native-meta
+            &env
+            `(fn ~'arity-0 ~(cond-> []
+                              varargs (conj '& varargs-param))
            (in-defining-ctx
             ~(if varargs `(apply ~'arity-0 ~varargs-param) `(~'arity-0))
             (let [~'invoc-array (when-not (zero? ~'invoc-size)
@@ -140,21 +154,25 @@
                ~@(when varargs
                    [`(aset ~(with-meta 'invoc-array #?(:cljd {:tag 'List} :default nil)) ~'vararg-idx ~varargs-param)])
                (loop []
-                 (when-not (nil? interrupt-fn#) (interrupt-fn#))
+                 (when-not (nil? ~interrupt-sym) (~interrupt-sym))
                  (let [ret# (types/eval ~'body ~'ctx ~'invoc-array)]
-                   (if (identical? recur# ret#)
+                   (if (identical? ~recur-sym ret#)
                      (recur)
-                     ret#)))))))))
+                     ret#))))))))))
      (let [fn-params (vec (repeatedly n gensym))
            varargs-param (when varargs (gensym))
+           recur-sym (gensym "recur")
+           interrupt-sym (gensym "interrupt-fn")
            asets `(do ~@(map (fn [fn-param idx]
                                `(aset ~(with-meta 'invoc-array
                                          #?(:cljd {:tag 'List} :default {:tag 'objects})) ~idx ~fn-param))
                              fn-params (range)))]
-       `(let [recur# recur
-              interrupt-fn# (:interrupt-fn ~'ctx)]
-          (fn ~(symbol (str "arity-" n)) ~(cond-> fn-params
-                                            varargs (conj '& varargs-param))
+       `(let [~recur-sym recur
+              ~interrupt-sym (:interrupt-fn ~'ctx)]
+          ~(native-meta
+            &env
+            `(fn ~(symbol (str "arity-" n)) ~(cond-> fn-params
+                                               varargs (conj '& varargs-param))
            (in-defining-ctx
             ~(if varargs
                `(apply ~(symbol (str "arity-" n)) ~@fn-params ~varargs-param)
@@ -169,11 +187,11 @@
                ~@(when varargs
                    [`(aset ~(with-meta 'invoc-array #?(:cljd {:tag 'List} :default nil)) ~'vararg-idx ~varargs-param)])
                (loop []
-                 (when-not (nil? interrupt-fn#) (interrupt-fn#))
+                 (when-not (nil? ~interrupt-sym) (~interrupt-sym))
                  (let [ret# (types/eval ~'body ~'ctx ~'invoc-array)]
-                   (if (identical? recur# ret#)
+                   (if (identical? ~recur-sym ret#)
                      (recur)
-                     ret#))))))))))))
+                     ret#)))))))))))))
 
 #_(require '[clojure.pprint :as pprint])
 #_(binding [*print-meta* true]

@@ -322,6 +322,16 @@
                    (sci/init {:namespaces {'user {'host-fn inc}}})
                    ['user/host-fn])))))))))
 
+#?(:clj
+   (deftest an-sci-function-holds-its-metadata-unwrapped-test
+     ;; with-meta on a fn class without its own metadata wraps it in a RestFn
+     ;; whose every call goes through applyTo with an argument seq
+     (let [f (sci/eval-string "(fn [x] (inc x))")
+           g (sci/eval-string "(defn g [x y] (+ x y)) g")
+           h (sci/eval-string "(let [n 2] (fn [x] (* n x)))")]
+       (is (not-any? #(instance? clojure.lang.RestFn %) [f g h]))
+       (is (= [2 3 6] [(f 1) (g 1 2) (h 3)])))))
+
 (deftest ns-map-test
   (is (eval* "(some? (get (ns-map *ns*) 'inc))"))
   #?(:clj (is (eval* "(some? (get (ns-map *ns*) 'String))")))

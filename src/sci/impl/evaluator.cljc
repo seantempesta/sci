@@ -208,12 +208,15 @@
 
 (defn eval-instance-method-invocation
   ;; one interop node for all sites. cache is a per-site volatile: a monomorphic
-  ;; site skips config resolution and meth-cache, reflecting directly on the
-  ;; cached method list. override/deny/:closed is resolved only on a cache miss,
+  ;; site skips config resolution and meth-cache and calls its resolved
+  ;; method's invoker (sci.impl.interop/invoke-instance-method-cached). override/deny/:closed is resolved only on a cache miss,
   ;; so a site using no member config pays nothing for the feature on the hot path.
   [ctx bindings instance-expr method-str method-str-unmunged method-sym field-access args #?(:cljs allowed) arg-count arg-types cache]
   (let [#?@(:clj [instance-meta (meta instance-expr)
-                  tag-class (:tag-class instance-meta)])
+                  ;; get, not a keyword call: every interop site shares this
+                  ;; call, so a keyword site would see many map classes and
+                  ;; allocate a lookup thunk at each change
+                  tag-class (get instance-meta :tag-class)])
         instance-expr* (types/eval instance-expr ctx bindings)
         v (get-from-type instance-expr* method-str method-str-unmunged #?(:cljd arg-count :clj arg-count :cljs args))]
     (if-not (identical? none-sentinel v)
