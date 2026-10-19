@@ -16,8 +16,11 @@
   - FISupport - extracted from Compiler to support functional interface adaptation"
   {:no-doc true}
   #?(:clj
-     (:import [java.lang.reflect Constructor Method Modifier Proxy]
-              [clojure.lang Reflector Compiler IFn RT])))
+     (:import [java.lang.reflect Constructor Executable Method Modifier Proxy]
+              [java.lang.invoke MethodHandle MethodHandleProxies MethodHandles MethodType]
+              [java.util.concurrent ConcurrentHashMap]
+              [clojure.asm ClassWriter Opcodes Type]
+              [clojure.lang Reflector Compiler DynamicClassLoader IFn RT])))
 
 #?(:clj (set! *warn-on-reflection* :warn-on-boxed))
 
@@ -143,15 +146,132 @@
                       ", given: " (.getName (.getClass arg)))))))))
 
 #?(:clj
-   (defn- box-args
-     "Box all arguments to match parameter types."
-     [^objects params ^objects args]
-     (if (zero? (alength params))
-       nil
-       (let [ret (object-array (alength params))]
-         (dotimes [i (alength params)]
-           (aset ret i (box-arg (aget params i) (aget args i))))
-         ret))))
+   (defmacro ^:private definvokers
+     "Defines the interfaces sci.impl.reflector.Invoke0 to InvokeN, each with
+      one method `invoke` of that many Objects returning Object and declaring
+      Throwable, so that an invoker rethrows what its method throws, as compiled
+      code does. Like gen-interface, it defines them at expansion and writes
+      their class files when compiling."
+     [n]
+     (let [object (Type/getType Object)]
+       (dotimes [i (inc n)]
+         (let [iname (str "sci/impl/reflector/Invoke" i)
+               cw (ClassWriter. 0)]
+           (.visit cw Opcodes/V1_8 (+ Opcodes/ACC_PUBLIC Opcodes/ACC_ABSTRACT Opcodes/ACC_INTERFACE)
+                   iname nil "java/lang/Object" nil)
+           (.visitEnd (.visitMethod cw (+ Opcodes/ACC_PUBLIC Opcodes/ACC_ABSTRACT) "invoke"
+                                    (Type/getMethodDescriptor object ^"[Lclojure.asm.Type;" (into-array Type (repeat i object)))
+                                    nil (into-array String ["java/lang/Throwable"])))
+           (.visitEnd cw)
+           (let [bytecode (.toByteArray cw)]
+             (when *compile-files* (Compiler/writeClassFile iname bytecode))
+             (.defineClass ^DynamicClassLoader (deref Compiler/LOADER) (.replace iname "/" ".") bytecode nil)))))
+     nil))
+
+#?(:clj (definvokers 8))
+
+#?(:clj
+   (do
+     (def ^:private ^java.lang.invoke.MethodHandles$Lookup lookup (MethodHandles/lookup))
+
+     (def ^:private invoke-interfaces
+       (mapv #(Class/forName (str "sci.impl.reflector.Invoke" %)) (range 9)))
+
+     (defn- cast-handle ^MethodHandle [method-name ^Class t]
+       (.findStatic lookup RT ^String method-name (MethodType/methodType t Object)))
+
+     ;; A primitive parameter takes a boxed number as box-arg does: unchecked.
+     (def ^:private primitive-casts
+       {Integer/TYPE (cast-handle "uncheckedIntCast" Integer/TYPE)
+        Long/TYPE (cast-handle "uncheckedLongCast" Long/TYPE)
+        Float/TYPE (cast-handle "uncheckedFloatCast" Float/TYPE)
+        Double/TYPE (cast-handle "uncheckedDoubleCast" Double/TYPE)
+        Short/TYPE (cast-handle "uncheckedShortCast" Short/TYPE)
+        Byte/TYPE (cast-handle "uncheckedByteCast" Byte/TYPE)})
+
+     (def ^:private ^MethodHandle canonical-boolean
+       (MethodHandles/insertArguments
+        (.findStatic lookup Reflector "prepRet" (MethodType/methodType Object Class (into-array Class [Object])))
+        0 (object-array [Boolean])))))
+
+#?(:clj
+   (defn- param-filter
+     "The handle converting an argument to parameter type t as box-arg does, or
+      nil when the invoker's asType cast is that conversion (references, boolean
+      and char)."
+     ^MethodHandle [^Class t]
+     (or (get primitive-casts t)
+         (when (and (not (.isPrimitive t)) (maybe-fi-method t))
+           (-> (.findVirtual lookup IFn "invoke" (MethodType/methodType Object Object (into-array Class [Object])))
+               (.bindTo box-arg)
+               (MethodHandles/insertArguments 0 (object-array [t]))
+               (.asType (MethodType/methodType t Object)))))))
+
+#?(:clj
+   (defn- build-invoker
+     "An Invoke<n> of the method or constructor e: its target (an instance
+      method's receiver first) and arguments as Objects, converted as box-arg
+      converts them, its result boxed as Method.invoke boxes it. Past 8
+      parameters, an Invoke1 of the argument array."
+     [^Executable e]
+     (let [ctor? (instance? Constructor e)
+           ^MethodHandle h (.asFixedArity (if ctor?
+                                            (.unreflectConstructor lookup ^Constructor e)
+                                            (.unreflect lookup ^Method e)))
+           offset (if (or ctor? (Modifier/isStatic (.getModifiers e))) 0 1)
+           params (.getParameterTypes e)
+           ^MethodHandle h (reduce (fn [^MethodHandle h i]
+                                     (if-some [f (param-filter (aget params i))]
+                                       (MethodHandles/filterArguments h (int (+ offset i)) ^"[Ljava.lang.invoke.MethodHandle;" (into-array MethodHandle [f]))
+                                       h))
+                                   h (range (alength params)))
+           arity (.parameterCount (.type h))
+           ^MethodHandle h (.asType h (MethodType/genericMethodType arity))
+           ^MethodHandle h (if (and (not ctor?) (identical? Boolean (.getReturnType ^Method e)))
+                             (MethodHandles/filterReturnValue h canonical-boolean)
+                             h)]
+       (if (< arity (count invoke-interfaces))
+         (MethodHandleProxies/asInterfaceInstance (nth invoke-interfaces arity) h)
+         (MethodHandleProxies/asInterfaceInstance (nth invoke-interfaces 1)
+                                                  (.asSpreader h (Class/forName "[Ljava.lang.Object;") (int arity)))))))
+
+#?(:clj
+   (do
+     ;; One invoker per method, shared by every call site and context that
+     ;; resolves to it; a ClassValue lets the declaring class unload with it.
+     (def ^:private ^java.lang.ClassValue invokers
+       (proxy [java.lang.ClassValue] []
+         (computeValue [_] (ConcurrentHashMap.))))
+
+     (def ^:private build-invoker-fn
+       (reify java.util.function.Function
+         (apply [_ e] (build-invoker e))))
+
+     (defn invoker
+       "The invoker of the method or constructor e (see build-invoker)."
+       [^Executable e]
+       (.computeIfAbsent ^ConcurrentHashMap (.get invokers (.getDeclaringClass e)) e build-invoker-fn))))
+
+#?(:clj
+   (defmacro ^:private invoke-array
+     "Expands to a call of invoker inv on target (when given) and the elements
+      of args, by their count."
+     [inv target args]
+     (let [n-max (dec 9)
+           params (fn [n] (cond->> (map (fn [i] `(aget ~args ~i)) (range n))
+                            target (cons target)))]
+       `(case (alength ~args)
+          ~@(mapcat (fn [n]
+                      (let [ps (params n)]
+                        [n `(.invoke ~(with-meta inv {:tag (symbol (str "sci.impl.reflector.Invoke" (count ps)))}) ~@ps)]))
+                    (range (if target n-max (inc n-max))))
+          (.invoke ~(with-meta inv {:tag 'sci.impl.reflector.Invoke1})
+                   ~(if target
+                      `(let [a# (object-array (inc (alength ~args)))]
+                         (aset a# 0 ~target)
+                         (System/arraycopy ~args 0 a# 1 (alength ~args))
+                         a#)
+                      args))))))
 
 #?(:clj
    (defn- param-arg-type-match?
@@ -279,7 +399,8 @@
 #?(:clj
    (defn resolve-method
      "This function selects the matching method and its accessible version.
-      It returns [Method paramTypes returnType] without invocation. It can
+      It returns [Method paramTypes returnType nil invoker] without invocation;
+      a call site's cache puts its argument classes in the empty slot. It can
       widen boxed numbers in args."
      ^objects [method-name ^java.util.List methods context-class target ^objects args arg-types]
      (let [^Method m (when-not (.isEmpty methods)
@@ -294,26 +415,27 @@
                       (alength args) " args"
                       (when context-class (str " for " context-class)))))
          (if-some [am (accessible-version m context-class target)]
-           (object-array [am (.getParameterTypes am) (.getReturnType am)])
+           (object-array [am (.getParameterTypes am) (.getReturnType am) nil (invoker am)])
            (throw (IllegalArgumentException.
                    (str "Can't call public method of non-public class: " m))))))))
 
 #?(:clj
    (defn invoke-resolved-method
-     "This function invokes a resolved [Method paramTypes returnType] entry.
-      It skips accessibility checks, parameter-type cloning, and overload matching."
+     "This function invokes a resolved method entry (see resolve-method)
+      through its invoker. It skips accessibility checks, parameter-type
+      cloning, and overload matching."
      [^objects resolved target ^objects args]
-     (let [^Method m (aget resolved 0)]
-       (try
-         (Reflector/prepRet ^Class (aget resolved 2)
-                            (.invoke m target (box-args (aget resolved 1) args)))
-         (catch Exception e
-           (throw (clojure.lang.Util/sneakyThrow (or (.getCause e) e))))))))
+     (let [inv (aget resolved 4)]
+       (if (Modifier/isStatic (.getModifiers ^Method (aget resolved 0)))
+         (invoke-array inv nil args)
+         (invoke-array inv target args)))))
 
 #?(:clj
    (defn resolve-constructor
      "This function selects a constructor in the same way as invoke-constructor.
-      It returns [Constructor paramTypes multiple?] but does not invoke the constructor."
+      It returns [Constructor paramTypes multiple? nil invoker] but does not
+      invoke the constructor; a call site's cache puts its argument classes in
+      the empty slot."
      [^Class c ^objects args]
      (let [ctors (.getConstructors c)
            arg-count (alength args)
@@ -338,19 +460,16 @@
                (when (== 1 (.size matching))
                  (.get matching 0)))]
          (if ctor
-           (object-array [ctor (.getParameterTypes ctor) multiple?])
+           (object-array [ctor (.getParameterTypes ctor) multiple? nil (invoker ctor)])
            (throw (IllegalArgumentException.
                    (str "No matching ctor found for " c))))))))
 
 #?(:clj
    (defn invoke-resolved-constructor
-     "This function invokes a resolved [Constructor paramTypes] entry."
+     "This function invokes a resolved constructor entry (see
+      resolve-constructor) through its invoker."
      [^objects resolved ^objects args]
-     (let [^Constructor ctor (aget resolved 0)]
-       (try
-         (.newInstance ctor ^objects (box-args (aget resolved 1) args))
-         (catch Exception e
-           (throw (clojure.lang.Util/sneakyThrow (or (.getCause e) e))))))))
+     (invoke-array (aget resolved 4) nil args)))
 
 #?(:clj
    (defn invoke-matching-method

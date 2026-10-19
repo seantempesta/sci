@@ -912,3 +912,62 @@
          (is (= 3 (f (PublicFields.))))
          (is (thrown? Exception (f "no fields here")))
          (is (= 3 (f (PublicFields.))))))))
+
+#?(:clj
+   (defn- allocated-per-iteration
+     "Bytes the current thread allocates per iteration of f, which runs n
+      iterations, after warming it up."
+     [f n]
+     (let [mx ^com.sun.management.ThreadMXBean (java.lang.management.ManagementFactory/getThreadMXBean)]
+       (dotimes [_ 20] (f))
+       (let [before (.getCurrentThreadAllocatedBytes mx)]
+         (f)
+         (/ (double (- (.getCurrentThreadAllocatedBytes mx) before)) n)))))
+
+#?(:clj
+   (deftest invoker-callsite-test
+     (let [opts {:classes {:allow :all}}]
+       (testing "a checked exception reaches catch unwrapped, as from compiled code"
+         (is (= :io (sci/eval-string
+                     "(try (java.nio.file.Files/readAllBytes (java.nio.file.Paths/get \"/no/such/file\" (into-array String [])))
+                           (catch java.io.IOException _ :io))" opts)))
+         (is (= :io (sci/eval-string
+                     "(try (.read (java.io.FileInputStream. \"/no/such/file\")) (catch java.io.FileNotFoundException _ :io))" opts))))
+       (testing "a varargs method takes its array as one argument"
+         (is (= "a-1" (sci/eval-string "(String/format \"%s-%s\" (into-array Object [\"a\" 1]))" opts))))
+       (testing "a fn passed to a functional interface parameter is adapted"
+         (is (= [1 2] (sci/eval-string "(let [acc (java.util.ArrayList.)] (.forEach (java.util.ArrayList. [1 2]) (fn [x] (.add acc x))) (vec acc))" opts))))
+       (testing "a boolean result is canonical"
+         (is (identical? Boolean/TRUE (sci/eval-string "(.equals \"a\" \"a\")" opts)))
+         (is (identical? Boolean/TRUE (sci/eval-string "(.booleanValue (Boolean. true))" opts))))
+       (testing "a long reaches an int parameter"
+         (is (= \b (sci/eval-string "(.charAt \"abc\" 1)" opts))))
+       (testing "a void method answers nil"
+         (is (nil? (sci/eval-string "(.clear (java.util.ArrayList.))" opts))))
+       (testing "past eight parameters the arguments go as one array"
+         (is (true? (sci/eval-string
+                     "(let [img (java.awt.image.BufferedImage. 2 2 java.awt.image.BufferedImage/TYPE_INT_RGB)]
+                        (.drawImage (.getGraphics img) img 0 0 1 1 0 0 1 1 nil))" opts))))
+       (testing "a call site evaluates its arguments into no array"
+         (let [f-call (sci/eval-string "(fn [^String s n] (loop [i 0] (when (< i n) (.equals s s) (recur (inc i)))))" opts)
+               f-none (sci/eval-string "(fn [^String s n] (loop [i 0] (when (< i n) s (recur (inc i)))))" opts)
+               n 100000]
+           (is (< (- (allocated-per-iteration #(f-call "a" n) n)
+                     (allocated-per-iteration #(f-none "a" n) n))
+                  4.0))))
+       (testing "a type-hinted dot product allocates near the same loop without interop"
+         (let [dot (sci/eval-string
+                    "(fn [^java.nio.FloatBuffer m dim]
+                       (loop [i 0 sum 0.0]
+                         (if (< i dim) (recur (inc i) (+ sum (* (.get m (int i)) (.get m (int (- dim i 1)))))) sum)))" opts)
+               plain (sci/eval-string
+                      "(fn [m dim]
+                         (loop [i 0 sum 0.0]
+                           (if (< i dim) (recur (inc i) (+ sum (* (int i) (int (- dim i 1))))) sum)))" opts)
+               dim 20000
+               m (java.nio.FloatBuffer/wrap (float-array (range dim)))]
+           ;; Each .get boxes its float, nothing else: about 32 bytes over the loop
+           ;; without interop, where argument arrays and reflection cost about 300.
+           (is (< (- (allocated-per-iteration #(dot m dim) dim)
+                     (allocated-per-iteration #(plain m dim) dim))
+                  48.0)))))))

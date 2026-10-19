@@ -94,31 +94,66 @@
                false)))))))
 
 #?(:clj
+   (defn- arg-class?
+     "True when argument a has the class at index i of classes (nil for nil)."
+     [^objects classes i a]
+     (if (nil? a)
+       (nil? (aget classes i))
+       (identical? (aget classes i) (.getClass ^Object a)))))
+
+#?(:clj
+   (defmacro ^:private invoke-site
+     "Expands to a cached call site's call. For each argument count that fits
+      an Invoke interface with target (when given), the argument nodes evaluate
+      into locals, and when prev (the entry's argument classes, nil for a site
+      with one candidate) matches their classes, the invoker inv takes target
+      and them: no argument array. Otherwise, and past those counts, body runs
+      with array-sym bound to the evaluated arguments and matched-sym to whether
+      prev matches them."
+     [arg-count args ctx bindings prev inv target [array-sym matched-sym] body]
+     (let [max-n (if target 7 8)]
+       `(case (int ~arg-count)
+          ~@(mapcat
+             (fn [n]
+               (let [syms (vec (repeatedly n #(gensym "arg")))
+                     ps (cond->> syms target (cons target))]
+                 [n `(let [~@(mapcat (fn [i s] [s `(sci.impl.types/eval (aget ~args ~i) ~ctx ~bindings)]) (range) syms)]
+                       (if (or (nil? ~prev) (and ~@(map-indexed (fn [i s] `(arg-class? ~prev ~i ~s)) syms)))
+                         (.invoke ~(with-meta inv {:tag (symbol (str "sci.impl.reflector.Invoke" (count ps)))}) ~@ps)
+                         (let [~array-sym (doto (object-array ~n) ~@(map-indexed (fn [i s] `(aset ~i ~s)) syms))
+                               ~matched-sym false]
+                           ~body)))]))
+             (range (inc max-n)))
+          (let [~array-sym (eval-args ~ctx ~bindings ~args ~arg-count)
+                ~matched-sym (or (nil? ~prev) (arg-classes-match? ~prev ~array-sym))]
+            ~body)))))
+
+#?(:clj
    (defn- resolve-and-cache
-     "This function resolves the method with reflection. For a site without
-      parameter tags, it stores a [Method paramTypes returnType prevArgClasses]
-      entry in cache slot 4.
+     "This function resolves the method with reflection and stores the
+      [Method paramTypes returnType prevArgClasses invoker] entry in cache slot 4.
       Later calls compare prevArgClasses with their argument classes. For a
       single-candidate site, prevArgClasses is nil. The arguments either fit
-      that candidate or cause an error. The function builds the full entry
-      before it updates the volatile."
+      that candidate or cause an error. A site's type hints are fixed, so the
+      classes decide the match. The function builds the full entry before it
+      updates the volatile."
      [obj ^Class target-class method cache ^objects cached ^objects args-array arg-types]
      (let [^java.util.List methods (aget cached 3)
            ;; The code records the classes before matching. Matching can widen args in place.
-           prev-arg-classes (when (and (nil? arg-types) (< 1 (.size methods)))
+           prev-arg-classes (when (< 1 (.size methods))
                               (arg-classes args-array))
-           resolved (reflector/resolve-method method methods target-class obj args-array arg-types)]
-       (when (and cache (nil? arg-types))
-         (let [entry (object-array [(aget resolved 0) (aget resolved 1) (aget resolved 2) prev-arg-classes])
-               ^objects arr (aclone cached)]
-           (aset arr 4 entry)
+           ^objects resolved (reflector/resolve-method method methods target-class obj args-array arg-types)]
+       (aset resolved 3 prev-arg-classes)
+       (when cache
+         (let [^objects arr (aclone cached)]
+           (aset arr 4 resolved)
            (vreset! cache arr)))
        resolved)))
 
 #?(:clj
    (defn- invoke-no-entry
-     "The cache has no resolved entry for a zero-argument field fallback, a
-      first call, or a param-tags site. The fallback caches its Field in slot 5."
+     "The cache has no resolved entry for a zero-argument field fallback or a
+      first call. The fallback caches its Field in slot 5."
      [ctx bindings obj ^Class target-class method cache ^objects cached ^objects args arg-count arg-types]
      (let [^java.util.List methods (aget cached 3)]
        (if (and (zero? (int arg-count)) (.isEmpty methods))
@@ -141,13 +176,15 @@
       in cache slot 4. Otherwise, it resolves and caches the method again."
      [ctx bindings obj ^Class target-class method cache ^objects cached ^objects args arg-count arg-types]
      (if-some [^objects entry (aget cached 4)]
-       (let [args-array (eval-args ctx bindings args arg-count)
-             ^objects prev-arg-classes (aget entry 3)]
-         (if (or (nil? prev-arg-classes) (arg-classes-match? prev-arg-classes args-array))
-           (reflector/invoke-resolved-method entry obj args-array)
-           (reflector/invoke-resolved-method
-            (resolve-and-cache obj target-class method cache cached args-array arg-types)
-            obj args-array)))
+       (let [prev (aget entry 3)
+             inv (aget entry 4)]
+         (invoke-site arg-count args ctx bindings prev inv obj
+                      [args-array matched?]
+                      (reflector/invoke-resolved-method
+                       (if matched?
+                         entry
+                         (resolve-and-cache obj target-class method cache cached args-array arg-types))
+                       obj args-array)))
        (invoke-no-entry ctx bindings obj target-class method cache cached args arg-count arg-types))))
 
 (defn invoke-instance-method
@@ -239,8 +276,8 @@
 #?(:clj
    (defn- resolve-static-and-cache
      "This function uses reflection to resolve a static method. It stores a
-      [Method paramTypes returnType prevArgClasses] entry in the volatile cache.
-      prevArgClasses is nil for a call site with one candidate."
+      [Method paramTypes returnType prevArgClasses invoker] entry in the volatile
+      cache. prevArgClasses is nil for a call site with one candidate."
      [ctx ^Class class ^String method-name cache ^objects args-array]
      (let [arg-count (alength args-array)
            ^java.util.List methods (meth-cache ctx class method-name arg-count
@@ -249,8 +286,9 @@
            ;; The code records the classes before matching. Matching can widen args in place.
            prev-arg-classes (when (< 1 (.size methods))
                               (arg-classes args-array))
-           resolved (reflector/resolve-method method-name methods nil nil args-array nil)]
-       (vreset! cache (object-array [(aget resolved 0) (aget resolved 1) (aget resolved 2) prev-arg-classes]))
+           ^objects resolved (reflector/resolve-method method-name methods nil nil args-array nil)]
+       (aset resolved 3 prev-arg-classes)
+       (vreset! cache resolved)
        resolved)))
 
 #?(:clj
@@ -258,12 +296,15 @@
      "When the argument classes match, this function uses the resolved entry
       in the volatile cache. Otherwise, it resolves and caches the method."
      [ctx bindings ^Class class ^String method-name cache ^objects args arg-count]
-     (let [args-array (eval-args ctx bindings args arg-count)
-           ^objects entry @cache]
-       (if (and entry
-                (let [^objects prev-arg-classes (aget entry 3)]
-                  (or (nil? prev-arg-classes) (arg-classes-match? prev-arg-classes args-array))))
-         (reflector/invoke-resolved-method entry nil args-array)
+     (if-some [^objects entry @cache]
+       (let [prev (aget entry 3)
+             inv (aget entry 4)]
+         (invoke-site arg-count args ctx bindings prev inv nil
+                      [args-array matched?]
+                      (reflector/invoke-resolved-method
+                       (if matched? entry (resolve-static-and-cache ctx class method-name cache args-array))
+                       nil args-array)))
+       (let [args-array (eval-args ctx bindings args arg-count)]
          (reflector/invoke-resolved-method
           (resolve-static-and-cache ctx class method-name cache args-array)
           nil args-array)))))
@@ -286,13 +327,14 @@
 #?(:clj
    (defn- resolve-ctor-and-cache
      "This function uses reflection to resolve a constructor. It stores a
-      [Constructor paramTypes prevArgClasses] entry in the volatile cache.
-      prevArgClasses is nil for a call site with one candidate."
+      [Constructor paramTypes multiple? prevArgClasses invoker] entry in the
+      volatile cache. prevArgClasses is nil for a call site with one candidate."
      [^Class class cache ^objects args-array]
-     (let [^objects resolved (reflector/resolve-constructor class args-array)
-           prev-arg-classes (when (aget resolved 2)
-                              (arg-classes args-array))]
-       (vreset! cache (object-array [(aget resolved 0) (aget resolved 1) prev-arg-classes]))
+     (let [prev-arg-classes (arg-classes args-array)
+           ^objects resolved (reflector/resolve-constructor class args-array)]
+       (when (aget resolved 2)
+         (aset resolved 3 prev-arg-classes))
+       (vreset! cache resolved)
        resolved)))
 
 #?(:clj
@@ -300,12 +342,15 @@
      "When the argument classes match, this function uses the resolved entry
       in the volatile cache. Otherwise, it resolves and caches the constructor."
      [ctx bindings ^Class class cache ^objects args arg-count]
-     (let [args-array (eval-args ctx bindings args arg-count)
-           ^objects entry @cache]
-       (if (and entry
-                (let [^objects prev-arg-classes (aget entry 2)]
-                  (or (nil? prev-arg-classes) (arg-classes-match? prev-arg-classes args-array))))
-         (reflector/invoke-resolved-constructor entry args-array)
+     (if-some [^objects entry @cache]
+       (let [prev (aget entry 3)
+             inv (aget entry 4)]
+         (invoke-site arg-count args ctx bindings prev inv nil
+                      [args-array matched?]
+                      (reflector/invoke-resolved-constructor
+                       (if matched? entry (resolve-ctor-and-cache class cache args-array))
+                       args-array)))
+       (let [args-array (eval-args ctx bindings args arg-count)]
          (reflector/invoke-resolved-constructor
           (resolve-ctor-and-cache class cache args-array)
           args-array)))))
@@ -318,7 +363,7 @@
      (let [^objects entry @cache]
        (if (and entry
                 (== (alength ^objects (aget entry 1)) (alength args-array))
-                (let [^objects prev-arg-classes (aget entry 2)]
+                (let [^objects prev-arg-classes (aget entry 3)]
                   (or (nil? prev-arg-classes) (arg-classes-match? prev-arg-classes args-array))))
          (reflector/invoke-resolved-constructor entry args-array)
          (reflector/invoke-resolved-constructor
