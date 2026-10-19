@@ -158,7 +158,8 @@
         _ (ev child "(defn g [] :child)")
         h (ev child "h")]
     (is (= :child (store/with-ctx child (h))))
-    (is (= :base (h)) "with no context, the Var's own binding")))
+    (is (= :child (h)) "read on the child, called with no context: the child")
+    (is (= :base ((ev base "h"))) "read on the base, called with no context: the base")))
 
 (defn- host-ctx
   "A context whose host namespace runs an SCI fn on a raw Thread, an executor
@@ -204,8 +205,8 @@
     (testing "an fn the host holds is called with no context at all"
       (let [g (ev fork "(fn [] [holder (priv)])")]
         (is (= [3 :second] (g)))))
-    (testing "a base fn passed by value runs under the base (its defining context)"
-      (is (= [1 :first] (ev fork "(host/thread calls-priv)"))))
+    (testing "a base fn read by value on a fork runs under the fork"
+      (is (= [3 :second] (ev fork "(host/thread calls-priv)"))))
     (testing "a context a library stored as the root (reset-ctx!) is no thread's own context"
       ;; clj-kondo's hooks namespace stores its context with reset-ctx! when
       ;; loaded, so every thread SCI did not enter reads it as *ctx*
@@ -216,6 +217,36 @@
                  (ev fork "[(host/thread (fn [] [holder (priv)]))
                             (host/pool (fn [] [holder (priv)]))]")))
           (finally (alter-var-root #'store/*ctx* (constantly stored))))))))
+
+(deftest a-function-escaping-a-fork-resolves-in-that-fork
+  ;; A function value made or read while a fork executes and called later on a
+  ;; thread with no context (a lazy seq realized after the evaluation, a
+  ;; callback a host executor runs) resolves the fork's definitions, though the
+  ;; function was analysed in the base.
+  (let [base (host-ctx)
+        _ (ev base "(defn- hub [x] (inc x))
+                    (defn answer [x] (hub x))
+                    (defn mapper [xs] (map answer xs))
+                    (defn mapper2 [xs] (map #(answer %) xs))")
+        branch (sci/fork base)
+        _ (ev branch "(defn- hub [x] (+ x 1000))")]
+    (testing "a lazy seq over a base function, built on the branch, realized outside"
+      (is (= [1001 1002 1003] (vec (ev branch "(mapper [1 2 3])")))))
+    (testing "a lambda made on the branch inside a base function, realized outside"
+      (is (= [1001 1002 1003] (vec (ev branch "(mapper2 [1 2 3])")))))
+    (testing "a base function read on the branch, called on a raw Thread and by the host"
+      (let [f (ev branch "answer")
+            p (promise)]
+        (.start (Thread. ^Runnable (fn [] (deliver p (f 1)))))
+        (is (= [1001 1001] [(deref p 2000 :timeout) (f 1)]))))
+    (testing "a context bound on the calling thread still wins"
+      (is (= 2 (store/with-ctx base ((ev branch "answer") 1)))))
+    (testing "the base keeps its own"
+      (is (= [2 3 4] (vec (ev base "(mapper [1 2 3])"))))
+      (is (= 2 ((ev base "answer") 1))))
+    (testing "one read per context answers one function"
+      (is (true? (ev branch "(identical? answer answer)")))
+      (is (true? (ev branch "(= #{answer} #{answer})"))))))
 
 (deftest a-fork-of-a-frozen-context-writes-nothing
   (let [builder (sci/init {})

@@ -347,7 +347,10 @@
         env (if (map? env)
               env
               (swap! env assoc :sci/generation (utils/next-generation)))]
-    (assoc ctx :env (atom (assoc env :sci/generation (utils/next-generation))))))
+    (assoc ctx :env (atom (-> env
+                              (assoc :sci/generation (utils/next-generation))
+                              ;; a parent's functions read by value stay bound to it
+                              (dissoc :sci.impl/escaping-fns))))))
 
 (defn freeze
   "The context as a value: its `:env` is the held map, so nothing evaluates

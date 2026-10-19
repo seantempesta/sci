@@ -45,6 +45,71 @@
                          ~body))
                :cljs body)))
 
+;; A function value outlives the evaluation that made or read it: a lazy seq
+;; realized after the evaluation, a callback a host executor runs. On a thread
+;; with no context it re-enters a context (in-defining-ctx above). That context
+;; is the one executing when the value was made or read, not the one that
+;; analysed it: a fork running a base function makes its closures and reads its
+;; program functions on the fork, and they resolve the fork's definitions when
+;; called later. A context bound on the calling thread still wins.
+#?(:clj
+   (defn executing-ctx
+     "The context the calling thread executes SCI under, or nil. A context a
+     library stored as the root of sci.ctx-store/*ctx* is no thread's own."
+     [] (let [active sci.ctx-store/*ctx*]
+          (when-not (or (nil? active)
+                        (identical? active (.getRawRoot (var sci.ctx-store/*ctx*))))
+            active))))
+
+#?(:clj
+   (defmacro ^:private in-ctx [ctx body]
+     `(if (nil? (executing-ctx))
+        (binding [sci.ctx-store/*ctx* ~ctx] ~body)
+        ~body)))
+
+#?(:clj
+   (defmacro ^:private ctx-fn
+     "An fn calling f under ctx on a thread with no context of its own, carrying
+     metadata so with-meta copies it rather than wrapping it."
+     [f ctx]
+     (let [fixed (for [n (range 20)]
+                   (let [args (vec (repeatedly n gensym))]
+                     `(~args (in-ctx ~ctx (~f ~@args)))))
+           args (vec (repeatedly 20 gensym))
+           more (gensym "more")]
+       (with-meta `(fn ~@fixed ([~@args & ~more] (in-ctx ~ctx (apply ~f ~@args ~more))))
+         {:sci.impl/escaping true}))))
+
+#?(:clj
+   (defn- escaping-fns
+     "The executing context's own map of its program functions read by value,
+     each bound to it, so one context's reads of one function answer one
+     value. A fork starts without its parent's (sci.core/fork)."
+     ^java.util.Map [env]
+     (or (:sci.impl/escaping-fns @env)
+         (:sci.impl/escaping-fns
+          (swap! env #(if (:sci.impl/escaping-fns %)
+                        %
+                        (assoc % :sci.impl/escaping-fns (java.util.concurrent.ConcurrentHashMap.))))))))
+
+#?(:clj
+   (defn escaping
+     "x read by value: an SCI function made in another context (its
+     :sci.impl/env), read while a context executes, is bound to the executing
+     context when called on a thread with no context; anything else is itself."
+     [x]
+     (if-some [ctx (executing-ctx)]
+       (let [env (:env ctx)
+             m (when (instance? clojure.lang.Fn x) (meta x))
+             made-in (:sci.impl/env m)]
+         (if (or (nil? made-in) (identical? env made-in))
+           x
+           (let [held (escaping-fns env)]
+             (or (.get held x)
+                 (let [bound (with-meta (ctx-fn x ctx) (assoc m :sci.impl/env env))]
+                   (or (.putIfAbsent held x bound) bound))))))
+       x)))
+
 ;; The interrupt-fn check in the generated fns below uses
 ;; (when-not (nil? interrupt-fn#) ...) rather than (when (some? interrupt-fn#) ...).
 ;; It runs on every fn entry / loop recur, so it is hot. nil? inlines to a single

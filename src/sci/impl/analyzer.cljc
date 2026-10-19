@@ -353,8 +353,10 @@
               m)]
     m))
 
-(defn- with-root-data [f root-data-fn bindings]
-  (vary-meta f assoc :sci.impl/root-data (root-data-fn bindings)))
+;; :sci.impl/env names the context a function was made in: the one executing
+;; its creation (sci.impl.fns/escaping).
+(defn- with-root-data [f root-data-fn bindings ctx]
+  (vary-meta f assoc :sci.impl/root-data (root-data-fn bindings) :sci.impl/env (:env ctx)))
 
 (defn single-arity-fn [bindings-fn root-data-fn fn-body fn-name self-ref-in-enclosed-idx self-ref? nsm fn-meta macro?
                        #?@(:cljs [capture-pairs enclosed-array-cnt])]
@@ -366,7 +368,9 @@
         #?@(:cljs [this-as-idx (:this-as-idx fn-body)])
         node
         (sci.impl.types/->Node
-         (let [enclosed-array (bindings-fn bindings)
+         (let [;; a function closes over the context executing its creation
+               ctx #?(:clj (or (fns/executing-ctx) ctx) :default ctx)
+               enclosed-array (bindings-fn bindings)
                f #?(:cljs (jit/make-fn fn-body ctx enclosed-array
                                        (fn [] (fns/fun ctx enclosed-array body fn-name macro? fixed-arity copy-enclosed->invocation
                                                        body invoc-size nsm vararg-idx this-as-idx)))
@@ -382,7 +386,7 @@
                                       ;; added for better error reporting
                                       :sci.impl/inner-fn f))
                    f)
-               f (with-root-data f root-data-fn bindings)]
+               f (with-root-data f root-data-fn bindings ctx)]
            (when self-ref?
              (aset #?(:cljd ^List enclosed-array :default ^objects enclosed-array)
                    self-ref-in-enclosed-idx
@@ -602,7 +606,9 @@
                                   {}
                                   bodies)]
                      (sci.impl.types/->Node
-                      (let [enclosed-array (bindings-fn bindings)
+                      (let [;; a function closes over the context executing its creation
+                            ctx #?(:clj (or (fns/executing-ctx) ctx) :default ctx)
+                            enclosed-array (bindings-fn bindings)
                             f (fn [& args]
                                 (let [arg-count (count args)]
                                   (if-let [f (fns/lookup-by-arity arities arg-count)]
@@ -625,7 +631,7 @@
                                                    ;; added for better error reporting
                                                    :sci.impl/inner-fn f))
                                 f)
-                            f (with-root-data f root-data-fn bindings)]
+                            f (with-root-data f root-data-fn bindings ctx)]
                         (when self-ref?
                           (aset #?(:cljd ^List enclosed-array :default ^objects enclosed-array)
                                 self-ref-in-enclosed-idx
@@ -2360,7 +2366,8 @@
                                             :cljs (new js/Error
                                                        (str "Can't take value of a macro: " v ""))))
                                   (sci.impl.types/->Node
-                                   (faster/deref-1 v)
+                                   #?(:clj (fns/escaping (faster/deref-1 v))
+                                      :default (faster/deref-1 v))
                                    nil
                                    ;; value-position var read: emitted as a
                                    ;; plain deref, never cached (see the
