@@ -4,6 +4,7 @@
   (:require
    #?(:clj [clojure.string :as str])
    [sci.ctx-store :as store]
+   #?@(:clj [[sci.impl.vars :as vars] [sci.lang]])
    ;; no hierarchies on cljd, like the host
    #?@(:cljd [] :default [[sci.impl.hierarchies :refer [global-hierarchy]]])))
 
@@ -181,6 +182,52 @@
      :clj (.addMethod ^clojure.lang.MultiFn multifn dispatch-val f)
      :cljs (-add-method multifn dispatch-val f)))
 
+;; A multimethod's method table is part of its Var's value, so a forked
+;; context writes it the way it writes the Var (`sci.core/fork`): in place when
+;; the context owns the MultiFn, else on a copy that becomes its own binding.
+#?(:clj
+   (defn- copy-multi-fn
+     "A new MultiFn with mf's dispatch, default, hierarchy, methods and
+     preferences: the same multimethod as a value of its own."
+     ^clojure.lang.MultiFn [mm-name ^clojure.lang.MultiFn mf]
+     (let [copy (clojure.lang.MultiFn. (str mm-name) (.-dispatchFn mf)
+                                       (.-defaultDispatchVal mf) (.-hierarchy mf))]
+       (doseq [[dv f] (.getMethodTable mf)] (.addMethod copy dv f))
+       (doseq [[x ys] (.getPreferTable mf) y ys] (.preferMethod copy x y))
+       copy)))
+
+#?(:clj
+   (defn- owns-multi-fn?
+     "Whether ctx writes mf, the value of sci-var it reads, in place: with no
+     binding of its own, when it owns the Var; with one, when it made mf in
+     its current generation. A fork renews both generations, so neither
+     owns a MultiFn they share."
+     [ctx sci-var mf]
+     (if (and ctx (vars/context-binding ctx sci-var))
+       (let [env @(:env ctx)]
+         (= (:sci/generation env) (get (:sci/multi-fns env) mf)))
+       (vars/owns? ctx sci-var))))
+
+#?(:clj
+   (defn multi-fn-add-method-var-impl
+     "Adds method f for dispatch-val to the multimethod sci-var holds in the
+     executing context (sci-var may be a built-in MultiFn itself); a context that does not own that MultiFn adds it to
+     a copy bound as its own value of the Var, so no context it shares the
+     Var with sees the method. Returns the MultiFn written."
+     [sci-var dispatch-val f]
+     (let [ctx (store/get-ctx)
+           ;; `(var sym)` of a built-in multimethod is the MultiFn itself
+           held? (instance? sci.lang.Var sci-var)
+           mf (if held? @sci-var sci-var)]
+       (if (or (not held?) (not (instance? clojure.lang.MultiFn mf)) (owns-multi-fn? ctx sci-var mf))
+         (multi-fn-add-method-impl mf dispatch-val f)
+         (let [copy (doto (copy-multi-fn (vars/toSymbol sci-var) mf) (.addMethod dispatch-val f))]
+           (swap! (:env ctx) (fn [env] (assoc-in env [:sci/multi-fns copy] (:sci/generation env))))
+           ;; the method table's write is bookkeeping, not a definition
+           (binding [sci.lang/*write-kind* :extend]
+             (vars/bindRoot sci-var copy))
+           copy)))))
+
 (defn defmethod
   "Creates and installs a new method of multimethod associated with dispatch-value. "
   [_x _y multifn dispatch-val & fn-tail]
@@ -207,6 +254,8 @@
                   (alter-meta! v# assoc :sci.impl/print-method (fn ~@fn-tail))
                   :else (clojure.core/multi-fn-add-method-impl ~multifn ~dispatch-val (fn ~@fn-tail))))
               (clojure.core/multi-fn-add-method-impl ~multifn ~dispatch-val (fn ~@fn-tail))))
-         `(clojure.core/multi-fn-add-method-impl ~multifn ~dispatch-val (fn ~@fn-tail))))
+         (if (symbol? multifn)
+           `(clojure.core/multi-fn-add-method-var-impl (var ~multifn) ~dispatch-val (fn ~@fn-tail))
+           `(clojure.core/multi-fn-add-method-impl ~multifn ~dispatch-val (fn ~@fn-tail)))))
      :cljs
      (list 'clojure.core/multi-fn-add-method-impl multifn dispatch-val (list* 'fn fn-tail))))

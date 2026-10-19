@@ -1648,6 +1648,7 @@
      #?@(:cljd ['methods (new-var 'methods sci.impl.multimethods/methods-impl clojure-core-ns)]
          :default ['methods (copy-core-var methods)])
      'multi-fn-add-method-impl (copy-var sci.impl.multimethods/multi-fn-add-method-impl clojure-core-ns)
+     #?@(:clj ['multi-fn-add-method-var-impl (copy-var sci.impl.multimethods/multi-fn-add-method-var-impl clojure-core-ns)])
      'multi-fn?-impl (copy-var sci.impl.multimethods/multi-fn?-impl clojure-core-ns)
      'multi-fn-impl (copy-var sci.impl.multimethods/multi-fn-impl clojure-core-ns)
      #?@(:cljd [] :default ['prefer-method (copy-core-var prefer-method)])

@@ -285,3 +285,32 @@
             bytes-per (/ (- (.getThreadAllocatedBytes mx thread) b0) (double n))]
         (is (< ns-per 1000.0) "a fork takes under a microsecond")
         (is (< bytes-per 3072.0) "a fork allocates under 3 KB")))))
+
+(defn- in-ctx [ctx s] (store/with-ctx ctx (sci/eval-string* ctx s)))
+
+(deftest a-method-written-in-a-fork-is-its-own
+  (testing "defmethod"
+    (let [base (sci/init {})
+          _ (in-ctx base "(ns r) (defmulti mm identity) (defmethod mm :a [_] 1)")
+          a (sci/fork base) b (sci/fork base)]
+      (in-ctx a "(in-ns 'r) (defmethod mm :a [_] 2)")
+      (is (= [2 1 1] (mapv #(in-ctx % "(r/mm :a)") [a b base])))))
+  (testing "a protocol extension of an inherited record"
+    (let [base (sci/init {})
+          _ (in-ctx base "(ns p) (defprotocol P (m [this])) (defrecord R [] P (m [_] 1)) (def r (->R))")
+          a (sci/fork base) b (sci/fork base)]
+      (in-ctx a "(in-ns 'p) (extend-type R P (m [_] 2))")
+      (is (= [2 1 1] (mapv #(in-ctx % "(p/m p/r)") [a b base])))))
+  (testing "extend-protocol, and satisfies? of the new type"
+    (let [base (sci/init {})
+          _ (in-ctx base "(ns q) (defprotocol P (m [this])) (extend-protocol P String (m [_] 1))")
+          a (sci/fork base) b (sci/fork base)]
+      (in-ctx a "(in-ns 'q) (extend-protocol P String (m [_] 2)) (extend-protocol P nil (m [_] 5))")
+      (is (= [2 1 1] (mapv #(in-ctx % "(q/m \"x\")") [a b base])))
+      (is (= [5 false] [(in-ctx a "(q/m nil)") (in-ctx b "(satisfies? q/P nil)")]))))
+  (testing "the context that owns the MultiFn writes it in place: a held value sees the method"
+    (let [base (sci/init {})]
+      (is (= [1 true] (in-ctx base "(defmulti mm identity) (def held mm) (defmethod mm :a [_] 1) [(held :a) (identical? held mm)]")))
+      (let [a (sci/fork base)]
+        (is (= [2 3 true] (in-ctx a "(defmethod mm :a [_] 2) (def held2 mm) (defmethod mm :b [_] 3) [(held2 :a) (held2 :b) (identical? held2 mm)]")))
+        (is (= 1 (in-ctx base "(mm :a)")))))))
